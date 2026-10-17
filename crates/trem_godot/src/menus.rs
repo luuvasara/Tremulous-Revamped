@@ -6943,6 +6943,66 @@ fn row_button(item: &str, cvar: &str, label: &str, menu: &str, row_delta: i32) -
     Some(b)
 }
 
+/// Create Server (ui/createserver.menu): every setting gets a short help text on hover, in
+/// the free strip between the two arrows: what it does in plain words, then
+/// its official (console) name. Gameplay values are not touched. A menu
+/// that lacks an item is left as it is for that item.
+fn patch_createserver(text: &str) -> String {
+    // (anchor in the item, up to three plain lines, official name)
+    const HELP: &[(&str, &[&str], &str)] = &[
+        ("cvar \"sv_hostname\"", &["The name players see for your server in the list."], "sv_hostname"),
+        ("feeder FEEDER_", &["The map the server starts on.", "Pick one in the list, then press Start server."], "map"),
+        ("cvar \"timelimit\"", &["Minutes until the match ends and the next map loads.", "0 = no time limit."], "timelimit"),
+        ("cvar \"sv_maxclients\"", &["How many players can be connected at once."], "sv_maxclients"),
+        ("cvar \"g_needpassword\"", &["Yes = players must know the password to join.", "Type the password in the field below."], "g_needpassword"),
+        ("cvar \"g_password\"", &["The password players type to join, when it is required."], "g_password"),
+        ("cvar \"sv_pure\"", &["Yes = only players with the same game files can join.", "Keeps out modified game files (pure server)."], "sv_pure"),
+        (
+            "cvar \"ui_dedicated\"",
+            &["No = you play on this PC while you host.", "LAN / Internet = server only (dedicated), no game window.", "Internet is also listed online. Players use UDP port 30720."],
+            "ui_dedicated",
+        ),
+        ("cvar \"sv_allowdownload\"", &["Yes = players missing a map or file can download it", "from your server (over the same UDP port 30720)."], "sv_allowdownload"),
+        ("cvar \"g_allowvote\"", &["Yes = players can call votes (kick a player, change the map)."], "g_allowvote"),
+        ("cvar \"sv_minping\"", &["Players with a ping below this are refused.", "0 = no minimum. Ping is in milliseconds (ms)."], "sv_minping"),
+        ("cvar \"sv_maxping\"", &["Players with a ping above this are refused.", "0 = no limit. Ping is in milliseconds (ms)."], "sv_maxping"),
+        (
+            "cvar \"g_synchronousclients\"",
+            &["Yes = server and players update in lock step (demo recording).", "Leave on No for normal play."],
+            "g_synchronousclients",
+        ),
+        ("cvar \"sv_maxrate\"", &["The most data per second the server sends to one player.", "In bytes per second; 0 = no limit."], "sv_maxrate"),
+        ("cvar \"sv_zombietime\"", &["Seconds the server waits after a player leaves", "before it frees the slot (zombie time)."], "sv_zombietime"),
+        ("cvar \"sv_reconnectlimit\"", &["The shortest wait, in seconds, between connection", "attempts from the same player (reconnect limit)."], "sv_reconnectlimit"),
+    ];
+    let mut t = text.to_string();
+    let mut helpers = String::new();
+    for (n, (anchor, lines, cvar)) in HELP.iter().enumerate() {
+        let Some(k) = t.find(anchor) else { continue };
+        let eol = t[k..].find('\n').map_or(t.len(), |o| k + o);
+        let names: Vec<String> = (0..4).map(|i| format!("help{n}_{i}")).collect();
+        let shown = |verb: &str| names.iter().map(|x| format!("        {verb} {x}")).collect::<Vec<_>>().join(";\n");
+        t.insert_str(eol, &format!("\n      mouseEnter\n      {{\n{}\n      }}\n      mouseExit\n      {{\n{}\n      }}", shown("show"), shown("hide")));
+        for (i, name) in names.iter().enumerate() {
+            let (s, color) = match lines.get(i) {
+                Some(l) if i < 3 => (l.to_string(), "1 1 1 1"),
+                _ if i == 3 => (format!("Official name: {cvar}"), ".7 .7 .7 1"),
+                _ => continue,
+            };
+            let y = 422 + 14 * i;
+            helpers.push_str(&format!(
+                "    itemDef\n    {{\n      name {name}\n      rect 80 {y} 420 14\n      type ITEM_TYPE_TEXT\n      decoration\n      visible MENU_FALSE\n      text \"{s}\"\n      textalign ALIGN_CENTER\n      textvalign VALIGN_CENTER\n      textalignx 0\n      textscale .27\n      forecolor {color}\n    }}\n\n"
+            ));
+        }
+    }
+    if !helpers.is_empty() {
+        if let Some((s, _)) = item_range(&t, "name back\n") {
+            t.insert_str(s, &helpers);
+        }
+    }
+    t
+}
+
 /// The options' Sound panel: a "Voice Chat..." button to the port's
 /// voice-chat page on the row after Doppler Sound. A menu without that
 /// row is left as it is.
@@ -6973,6 +7033,7 @@ fn load_ui(lib: &mut Library) -> Result<Ui, String> {
     let port = load_menu_files(&with_port, &mut |p: &str| match p {
         PORT_AUDIO_MENU_FILE => Some(port_audio_menu()),
         PORT_VOICE_MENU_FILE => Some(port_voice_menu(&devices)),
+        "ui/createserver.menu" => lib.text(p).map(|t| patch_createserver(&t)),
         "ui/ingame_options.menu" => lib.text(p).map(|t| patch_voice_button(&patch_voip_bind(&patch_sound_options(&t)))),
         _ => lib.text(p),
     });
@@ -8395,6 +8456,35 @@ mod tests {
         assert!(txt.contains("refreshmic") && txt.contains("voipRefreshDevices"), "the Refresh button");
         assert!(page.contains("rect 20 77 70 20") && page.contains("rect 100 77 220 20"));
         assert_eq!(page.matches("rect 20 77 300 20").count(), 0);
+    }
+
+    #[test]
+    fn createserver_settings_have_help() {
+        // the legacy menus as re/source/assets has them (data-legacy-assets.pk3)
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../re/source/assets");
+        let read = |p: &str| std::fs::read_to_string(repo.join(p)).ok();
+        let Some(orig) = read("ui/createserver.menu") else {
+            eprintln!("re/source/assets has no ui/createserver.menu: skipping");
+            return;
+        };
+        let patched = patch_createserver(&orig);
+        // every setting shows its help on hover and hides it again
+        for cvar in ["sv_hostname", "timelimit", "sv_maxclients", "g_needpassword", "g_password", "sv_pure", "ui_dedicated", "sv_allowdownload", "g_allowvote", "sv_minping", "sv_maxping", "g_synchronousclients", "sv_maxrate", "sv_zombietime", "sv_reconnectlimit"] {
+            let (s, e) = item_range(&patched, &format!("cvar \"{cvar}\"")).unwrap();
+            let it = &patched[s..e];
+            assert!(it.contains("mouseEnter") && it.contains("mouseExit"), "{cvar}");
+            assert!(patched.contains(&format!("Official name: {cvar}")), "{cvar} help");
+        }
+        assert!(patched.contains("Official name: map"));
+        // the gameplay values are the file's own: only the added blocks differ
+        assert_eq!(patched.matches("cvar \"").count(), orig.matches("cvar \"").count());
+        // it parses, and the help items start hidden
+        let mut r = |p: &str| if p == "ui/createserver.menu" { Some(patched.clone()) } else { read(p) };
+        let (menus, _) = load_menu_files(&["ui/createserver.menu".to_string()], &mut r).unwrap();
+        let m = menus.iter().find(|m| m.name() == "createserver").expect("createserver parsed");
+        let txt = format!("{m:?}");
+        assert!(txt.contains("help3_0"));
+        assert_eq!(patch_createserver("menuDef { }"), "menuDef { }");
     }
 
     #[test]
