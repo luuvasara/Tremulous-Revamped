@@ -1823,7 +1823,7 @@ pub fn load_menu_files(files: &[String], read: &mut dyn FnMut(&str) -> Option<St
     let mut menus = Vec::new();
     let mut defines = HashMap::new();
     for f in files {
-        let text = read(f).ok_or_else(|| format!("{f}: not found"))?;
+        let text = patch_arrow_labels(&read(f).ok_or_else(|| format!("{f}: not found"))?);
         let mut set = MenuSet::default();
         hud::parse_menus_into(&mut set, &text, read).map_err(|e| format!("{f}: {e}"))?;
         let noscroll = scan_noscrollbar(&text, read);
@@ -6887,9 +6887,79 @@ fn patch_voip_bind(text: &str) -> String {
     format!("{}\n\n    {}{}", &text[..end], copy, &text[end..])
 }
 
+/// dec086: the round Back / Accept arrows of the legacy pages draw their
+/// word (Back, Join, Create ...) only while the pointer is on them (the `*_alt` twin has the text,
+/// the plain arrow none). Every page that has such a pair now draws the word all the time: the plain
+/// item gets the twin's text lines and becomes a button (a text is only drawn for text and button
+/// items); the hover swap (hide the plain item, show the twin) still works, the twin has the same
+/// word at the same place. Pages and arrows are found by the pair itself (`<name>` with an arrow
+/// background and `<name>_alt` with a text), not by file name, so any legacy page is covered.
+pub(crate) fn patch_arrow_labels(text: &str) -> String {
+    // the item `name <n>` exactly (not `name <n>_alt`, not `name <n>ground`)
+    fn named(t: &str, n: &str) -> Option<(usize, usize)> {
+        let needle = format!("name {n}");
+        let mut from = 0;
+        while let Some(k) = t[from..].find(&needle) {
+            let at = from + k;
+            let end = at + needle.len();
+            if t[end..].chars().next().is_none_or(char::is_whitespace) {
+                return item_range_at(t, at);
+            }
+            from = end;
+        }
+        None
+    }
+    let t = text.replace("\r\n", "\n");
+    let mut out = t.clone();
+    let mut from = 0;
+    while let Some(k) = t[from..].find("_alt") {
+        let at = from + k;
+        from = at + 4;
+        // `name <base>_alt`
+        let line_start = t[..at].rfind('\n').map_or(0, |n| n + 1);
+        let head = t[line_start..at].trim_start();
+        let Some(base) = head.strip_prefix("name ").map(str::trim) else { continue };
+        if base.is_empty() || base.contains(char::is_whitespace) {
+            continue;
+        }
+        let Some((as_, ae)) = named(&t, &format!("{base}_alt")) else { continue };
+        let alt = &t[as_..ae];
+        if !alt.contains("arrow_alt.tga") {
+            continue;
+        }
+        let lines: Vec<&str> = alt.lines().map(str::trim).filter(|l| l.starts_with("text ") || l.starts_with("textalign") || l.starts_with("textvalign") || l.starts_with("textscale")).collect();
+        if !lines.iter().any(|l| l.starts_with("text \"")) {
+            continue;
+        }
+        let Some((bs, be)) = named(&out, base) else { continue };
+        let body = &out[bs..be];
+        // the base item itself (not the twin, not another item whose name starts the same)
+        if body.contains("_alt.tga") || !body.contains("arrow.tga") || body.lines().any(|l| l.trim_start().starts_with("text \"")) {
+            continue;
+        }
+        let Some(name_end) = body.find("name ").and_then(|n| body[n..].find('\n').map(|e| n + e + 1)) else { continue };
+        let mut add = String::new();
+        if !body.lines().any(|l| l.trim_start().starts_with("type ")) {
+            add += "      type ITEM_TYPE_BUTTON\n";
+        }
+        if !body.lines().any(|l| l.trim_start().starts_with("forecolor ")) {
+            add += "      forecolor 1 1 1 1\n";
+        }
+        for l in lines {
+            add += &format!("      {l}\n");
+        }
+        out.insert_str(bs + name_end, &add);
+    }
+    out
+}
+
 /// The byte range of the `itemDef { .. }` holding `needle`.
 fn item_range(text: &str, needle: &str) -> Option<(usize, usize)> {
-    let k = text.find(needle)?;
+    item_range_at(text, text.find(needle)?)
+}
+
+/// The `itemDef { ... }` that contains byte `k`.
+fn item_range_at(text: &str, k: usize) -> Option<(usize, usize)> {
     let start = text[..k].rfind("itemDef")?;
     let open = text[start..].find('{').map(|o| start + o)?;
     let mut depth = 0;
@@ -9408,5 +9478,61 @@ mod tests {
         let d1 = ((rc[0] + 15.0 - 320.0).powi(2) + (rc[1] + 10.0 - 240.0).powi(2)).sqrt();
         assert!((d0 - d1).abs() < 0.01 && rc[0] != 200.0, "orbited: {rc:?}");
         assert_ne!(u.it(c).flags & WINDOW_ORBITING, 0);
+    }
+
+    // ---------------------------------------------------------------- arrow labels (dec086)
+
+    /// The round Back / Accept arrows draw their word without the pointer on them.
+    #[test]
+    fn arrow_pages_label_their_arrows_all_the_time() {
+        // the pattern, on a synthetic page in both syntaxes (MENU_TRUE / 1, named / numbered alignment)
+        let page = "menuDef {\n  name \"p\"\n  itemDef\n  {\n    name back\n    style 3\n    background \"ui/assets/backarrow.tga\"\n    rect 16 424 50 50\n    visible 1\n    mouseEnter { hide back; show back_alt }\n  }\n  itemDef\n  {\n    name back_alt\n    background \"ui/assets/backarrow_alt.tga\"\n    visible 0\n    type ITEM_TYPE_BUTTON\n    text \"Back\"\n    textalign ITEM_ALIGN_LEFT\n    textalignx 60\n    textscale .6\n  }\n  itemDef\n  {\n    name other\n    background \"x.tga\"\n  }\n}\n";
+        let out = patch_arrow_labels(page);
+        let (s, e) = item_range(&out, "name back\n").unwrap();
+        let b = &out[s..e];
+        assert!(b.contains("text \"Back\"") && b.contains("type ITEM_TYPE_BUTTON") && b.contains("textalignx 60"), "{b}");
+        // the twin and a non-arrow item are untouched, and a second pass changes nothing
+        let (s, e) = item_range(&out, "name back_alt").unwrap();
+        assert_eq!(out[s..e].matches("text \"Back\"").count(), 1);
+        assert!(!out[item_range(&out, "name other").unwrap().0..].contains("text \"Back\"\n    textalign ITEM_ALIGN_LEFT\n    textalignx 60\n    textscale .6\n  }\n}"));
+        assert_eq!(patch_arrow_labels(&out), out);
+        // a page with no arrows is returned as it is
+        assert_eq!(patch_arrow_labels("menuDef { name \"q\" }"), "menuDef { name \"q\" }");
+    }
+
+    /// Every legacy page (1.3 and 1.1.0 data) that has an arrow with a hover twin: after loading, the
+    /// plain arrow carries the twin's word and is a button; Join Server and Create Server are among them.
+    #[test]
+    fn every_arrow_page_in_the_data_has_an_always_visible_label() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../re");
+        let mut pairs = 0;
+        let mut pages = std::collections::BTreeSet::new();
+        for dir in ["source/assets", "source11"] {
+            let ui = root.join(dir).join("ui");
+            let Ok(rd) = std::fs::read_dir(&ui) else { continue };
+            for f in rd.flatten().map(|f| f.file_name().to_string_lossy().to_string()).filter(|f| f.ends_with(".menu")) {
+                let mut rdr = |p: &str| std::fs::read_to_string(root.join(dir).join(p)).ok();
+                let Ok((menus, _)) = load_menu_files(&[format!("ui/{f}")], &mut rdr) else { continue };
+                for m in &menus {
+                    for it in &m.items {
+                        let n = &it.def.name;
+                        let Some(alt) = m.items.iter().find(|a| a.def.name == format!("{n}_alt")) else { continue };
+                        if !alt.def.background.as_deref().is_some_and(|b| b.contains("arrow_alt")) || alt.def.text.as_deref().unwrap_or("").is_empty() {
+                            continue;
+                        }
+                        assert_eq!(it.def.text, alt.def.text, "{dir}/{f}: the arrow `{n}` has no label of its own");
+                        assert_eq!(it.def.item_type, alt.def.item_type, "{dir}/{f}: `{n}` is not a button like its twin (menudef.h numbers differ between the data sets), its label would not be drawn");
+                        pairs += 1;
+                        pages.insert(f.clone());
+                    }
+                }
+            }
+        }
+        if pairs == 0 {
+            eprintln!("no legacy menus here: skipped");
+            return;
+        }
+        assert!(pages.contains("joinserver.menu") && pages.contains("createserver.menu"), "{pages:?}");
+        assert!(pairs >= 4, "{pairs}");
     }
 }
