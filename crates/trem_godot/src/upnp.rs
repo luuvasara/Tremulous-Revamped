@@ -6,7 +6,11 @@
 //! the router (SSDP), asks it to forward the server's port to this PC
 //! (AddPortMapping) and for the address the friend should join
 //! (GetExternalIPAddress), and takes the mapping back when the server
-//! stops. std only, run on a thread (discovery waits up to two seconds).
+//! stops. The mapping is timed (two hours, like PCP) and renewed while the
+//! server runs (pcp::keep_upnp), so a game that crashes or is killed leaves
+//! nothing in the router for longer than that; only a router that takes
+//! permanent mappings alone (error 725) gets one. std only, run on a thread
+//! (discovery waits up to two seconds).
 
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
@@ -22,7 +26,13 @@ pub struct Mapping {
     pub local_ip: Ipv4Addr,
     /// the router's internet address (what friends join), when it says
     pub external_ip: Option<String>,
+    /// the lease asked for, in seconds (0: permanent, error 725 routers)
+    pub lease: u32,
+    pub desc: String,
 }
+
+/// UPnP error 725 OnlyPermanentLeasesSupported: the router takes lease 0 only.
+const ONLY_PERMANENT: &str = "725";
 
 const SERVICES: [&str; 3] = ["urn:schemas-upnp-org:service:WANIPConnection:2", "urn:schemas-upnp-org:service:WANIPConnection:1", "urn:schemas-upnp-org:service:WANPPPConnection:1"];
 
@@ -161,6 +171,30 @@ fn local_ip_to(host: &str) -> Option<Ipv4Addr> {
     }
 }
 
+/// The address of this PC that faces the default route (what a UDP socket
+/// "connected" towards the internet would use; nothing is sent).
+pub fn default_route_ip() -> Option<Ipv4Addr> {
+    local_ip_to("192.0.2.1")
+}
+
+/// AddPortMapping: Ok, or the router's (error code, description).
+fn add(control_url: &str, service: &str, port: u16, local_ip: Ipv4Addr, desc: &str, lease: u32) -> Result<Result<(), (String, String)>, String> {
+    let (st, body) = soap(control_url, service, "AddPortMapping", &[
+        ("NewRemoteHost", String::new()),
+        ("NewExternalPort", port.to_string()),
+        ("NewProtocol", "UDP".into()),
+        ("NewInternalPort", port.to_string()),
+        ("NewInternalClient", local_ip.to_string()),
+        ("NewEnabled", "1".into()),
+        ("NewPortMappingDescription", desc.into()),
+        ("NewLeaseDuration", lease.to_string()),
+    ])?;
+    if st == 200 {
+        return Ok(Ok(()));
+    }
+    Ok(Err((tag(&body, "errorCode").unwrap_or("?").to_string(), tag(&body, "errorDescription").unwrap_or("").to_string())))
+}
+
 /// Ask the gateway at `location` to forward UDP `port` to this PC.
 pub fn map_at(location: &str, port: u16, desc: &str) -> Result<Mapping, String> {
     let (st, description) = http(location, "GET", &[], "")?;
@@ -170,47 +204,29 @@ pub fn map_at(location: &str, port: u16, desc: &str) -> Result<Mapping, String> 
     let (service, control_url) = wan_service(location, &description).ok_or("the router has no WAN connection service")?;
     let (host, _, _) = split_url(&control_url).ok_or("bad control URL")?;
     let local_ip = local_ip_to(&host).ok_or("no local address towards the router")?;
-    let add = |lease: u32| {
-        soap(&control_url, &service, "AddPortMapping", &[
-            ("NewRemoteHost", String::new()),
-            ("NewExternalPort", port.to_string()),
-            ("NewProtocol", "UDP".into()),
-            ("NewInternalPort", port.to_string()),
-            ("NewInternalClient", local_ip.to_string()),
-            ("NewEnabled", "1".into()),
-            ("NewPortMappingDescription", desc.into()),
-            ("NewLeaseDuration", lease.to_string()),
-        ])
-    };
-    // a permanent lease (taken back when the server stops); routers that
-    // only take timed leases get a day
-    let (mut st, mut body) = add(0)?;
-    if st != 200 {
-        (st, body) = add(86400)?;
+    // a timed lease, renewed while the server runs: a crashed game's mapping
+    // runs out by itself. Lease 0 (permanent) only for a router that says it
+    // takes nothing else.
+    let mut lease = crate::pcp::LIFETIME;
+    let mut r = add(&control_url, &service, port, local_ip, desc, lease)?;
+    if matches!(&r, Err((code, _)) if code == ONLY_PERMANENT) {
+        lease = 0;
+        r = add(&control_url, &service, port, local_ip, desc, lease)?;
     }
-    if st != 200 {
-        let code = tag(&body, "errorCode").unwrap_or("?").to_string();
-        let what = tag(&body, "errorDescription").unwrap_or("").to_string();
+    if let Err((code, what)) = r {
         return Err(format!("the router refused the port mapping (UPnP error {code} {what})"));
     }
     let external_ip = soap(&control_url, &service, "GetExternalIPAddress", &[]).ok().and_then(|(s, b)| (s == 200).then(|| tag(&b, "NewExternalIPAddress").map(str::to_string)).flatten()).filter(|ip| !ip.is_empty());
-    Ok(Mapping { control_url, service, port, local_ip, external_ip })
+    Ok(Mapping { control_url, service, port, local_ip, external_ip, lease, desc: desc.to_string() })
 }
 
-/// Find a gateway and map `port` (UDP) to this PC.
-pub fn map_udp(port: u16, desc: &str) -> Result<Mapping, String> {
-    let gws = discover(Duration::from_millis(2000));
-    if gws.is_empty() {
-        return Err("no UPnP router answered (UPnP off, or not a home router)".into());
+/// Renew a timed mapping (the same AddPortMapping again; the router
+/// restarts its lease). Err: the router no longer takes it.
+pub fn renew(m: &Mapping) -> Result<(), String> {
+    match add(&m.control_url, &m.service, m.port, m.local_ip, &m.desc, m.lease)? {
+        Ok(()) => Ok(()),
+        Err((code, what)) => Err(format!("UPnP error {code} {what}")),
     }
-    let mut last = String::new();
-    for g in gws {
-        match map_at(&g, port, desc) {
-            Ok(m) => return Ok(m),
-            Err(e) => last = e,
-        }
-    }
-    Err(last)
 }
 
 /// Take a mapping back.
@@ -242,14 +258,28 @@ mod tests {
 <service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>/ctl/IPConn</controlURL></service>
 </serviceList></device></deviceList></device></root>"#;
 
-    /// A fake router: serves the description, records the SOAP actions.
-    fn fake_router(refuse_permanent: bool) -> (String, Arc<Mutex<Vec<String>>>) {
+    /// What the fake router does with AddPortMapping.
+    #[derive(Clone, Copy, PartialEq)]
+    pub(crate) enum Igd {
+        /// takes any lease
+        Takes,
+        /// error 725 OnlyPermanentLeasesSupported for a timed lease
+        OnlyPermanent,
+        /// error 718 ConflictInMappingEntry for every request
+        Conflict,
+    }
+
+    /// A fake router: serves the description, records the SOAP actions; its
+    /// behaviour can change while it runs.
+    pub(crate) fn fake_igd(mode: Igd) -> (String, Arc<Mutex<Vec<String>>>, Arc<Mutex<Igd>>) {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = l.local_addr().unwrap().port();
         let log = Arc::new(Mutex::new(Vec::new()));
         let log2 = log.clone();
+        let mode = Arc::new(Mutex::new(mode));
+        let mode2 = mode.clone();
         std::thread::spawn(move || {
-            for s in l.incoming().flatten().take(8) {
+            for s in l.incoming().flatten().take(64) {
                 let mut s = s;
                 let _ = s.set_read_timeout(Some(Duration::from_millis(500)));
                 let mut buf = vec![0u8; 8192];
@@ -273,10 +303,13 @@ mod tests {
                 } else {
                     let action = header(&t, "soapaction").unwrap_or_default();
                     log2.lock().unwrap().push(format!("{action} {}", t.split_once("\r\n\r\n").map(|x| x.1).unwrap_or("")));
-                    if action.contains("AddPortMapping") && refuse_permanent && t.contains("<NewLeaseDuration>0<") {
+                    let m = *mode2.lock().unwrap();
+                    if action.contains("AddPortMapping") && m == Igd::OnlyPermanent && !t.contains("<NewLeaseDuration>0<") {
                         (500, "<errorCode>725</errorCode><errorDescription>OnlyPermanentLeasesSupported</errorDescription>".to_string())
+                    } else if action.contains("AddPortMapping") && m == Igd::Conflict {
+                        (500, "<errorCode>718</errorCode><errorDescription>ConflictInMappingEntry</errorDescription>".to_string())
                     } else if action.contains("GetExternalIPAddress") {
-                        (200, "<NewExternalIPAddress>120.158.17.217</NewExternalIPAddress>".to_string())
+                        (200, "<NewExternalIPAddress>203.0.113.17</NewExternalIPAddress>".to_string())
                     } else {
                         (200, "<ok/>".to_string())
                     }
@@ -284,16 +317,21 @@ mod tests {
                 let _ = s.write_all(format!("HTTP/1.1 {code} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
             }
         });
-        (format!("http://127.0.0.1:{port}/rootDesc.xml"), log)
+        (format!("http://127.0.0.1:{port}/rootDesc.xml"), log, mode)
+    }
+
+    fn fake_router(mode: Igd) -> (String, Arc<Mutex<Vec<String>>>) {
+        let (loc, log, _) = fake_igd(mode);
+        (loc, log)
     }
 
     #[test]
     fn the_router_forwards_the_port_and_names_the_address() {
-        let (loc, log) = fake_router(false);
+        let (loc, log) = fake_router(Igd::Takes);
         let m = map_at(&loc, 30720, "Tremulous").unwrap();
         assert_eq!(m.service, "urn:schemas-upnp-org:service:WANIPConnection:1");
         assert!(m.control_url.ends_with("/ctl/IPConn"), "{}", m.control_url);
-        assert_eq!(m.external_ip.as_deref(), Some("120.158.17.217"));
+        assert_eq!(m.external_ip.as_deref(), Some("203.0.113.17"));
         let l = log.lock().unwrap().clone();
         assert!(l[0].contains("AddPortMapping") && l[0].contains("<NewExternalPort>30720<") && l[0].contains("<NewProtocol>UDP<") && l[0].contains("<NewInternalClient>127.0.0.1<"), "{l:?}");
         unmap(&m);
@@ -302,17 +340,80 @@ mod tests {
     }
 
     #[test]
-    fn a_router_wanting_a_timed_lease_gets_a_day() {
-        let (loc, log) = fake_router(true);
-        map_at(&loc, 30720, "Tremulous").unwrap();
+    fn the_lease_is_two_hours_not_permanent() {
+        let (loc, log) = fake_router(Igd::Takes);
+        let m = map_at(&loc, 30720, "Tremulous").unwrap();
+        assert_eq!(m.lease, 7200);
         let l = log.lock().unwrap().clone();
-        assert!(l.iter().any(|a| a.contains("AddPortMapping") && a.contains("<NewLeaseDuration>86400<")), "{l:?}");
+        let adds: Vec<&String> = l.iter().filter(|a| a.contains("AddPortMapping")).collect();
+        assert_eq!(adds.len(), 1, "{l:?}");
+        assert!(adds[0].contains("<NewLeaseDuration>7200<"), "{l:?}");
+        // a renewal is the same request again
+        renew(&m).unwrap();
+        let l = log.lock().unwrap().clone();
+        assert_eq!(l.iter().filter(|a| a.contains("AddPortMapping") && a.contains("<NewLeaseDuration>7200<") && a.contains("<NewPortMappingDescription>Tremulous<")).count(), 2, "{l:?}");
+    }
+
+    #[test]
+    fn only_a_router_that_takes_permanent_leases_alone_gets_one() {
+        let (loc, log) = fake_router(Igd::OnlyPermanent);
+        let m = map_at(&loc, 30720, "Tremulous").unwrap();
+        assert_eq!(m.lease, 0);
+        let l = log.lock().unwrap().clone();
+        let adds: Vec<&String> = l.iter().filter(|a| a.contains("AddPortMapping")).collect();
+        assert!(adds.len() == 2 && adds[0].contains("<NewLeaseDuration>7200<") && adds[1].contains("<NewLeaseDuration>0<"), "{l:?}");
+        // any other refusal: no permanent retry
+        let (loc, log) = fake_router(Igd::Conflict);
+        let e = map_at(&loc, 30720, "Tremulous").unwrap_err();
+        assert!(e.contains("UPnP error 718"), "{e}");
+        let l = log.lock().unwrap().clone();
+        assert!(!l.iter().any(|a| a.contains("<NewLeaseDuration>0<")), "{l:?}");
+    }
+
+    #[test]
+    fn the_keeper_renews_and_takes_the_mapping_back() {
+        let (loc, log, _) = fake_igd(Igd::Takes);
+        let m = map_at(&loc, 30720, "Tremulous").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let k = crate::pcp::keep_upnp(m, Duration::from_millis(200), tx);
+        std::thread::sleep(Duration::from_millis(700));
+        let adds = log.lock().unwrap().iter().filter(|a| a.contains("AddPortMapping") && a.contains("<NewLeaseDuration>7200<")).count();
+        assert!(adds >= 3, "first mapping + renewals: {adds}");
+        k.stop(true);
+        assert!(log.lock().unwrap().last().unwrap().contains("DeletePortMapping"));
+        assert!(rx.try_recv().is_err(), "no news while it renews");
+    }
+
+    #[test]
+    fn a_renewal_the_router_refuses_is_reported_and_still_deleted_on_stop() {
+        let (loc, log, mode) = fake_igd(Igd::Takes);
+        let m = map_at(&loc, 30720, "Tremulous").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let k = crate::pcp::keep_upnp(m, Duration::from_millis(150), tx);
+        *mode.lock().unwrap() = Igd::Conflict;
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), crate::pcp::Event::UpnpLost);
+        k.stop(true);
+        assert!(log.lock().unwrap().last().unwrap().contains("DeletePortMapping"));
+    }
+
+    #[test]
+    fn a_permanent_mapping_is_not_renewed_but_taken_back() {
+        let (loc, log, _) = fake_igd(Igd::OnlyPermanent);
+        let m = map_at(&loc, 30720, "Tremulous").unwrap();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let k = crate::pcp::keep_upnp(m, Duration::from_millis(100), tx);
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(log.lock().unwrap().iter().filter(|a| a.contains("AddPortMapping")).count(), 2, "7200 refused, 0 taken, nothing after");
+        // the game ends without stop(): the dropped channel takes it back too
+        drop(k);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(log.lock().unwrap().last().unwrap().contains("DeletePortMapping"));
     }
 
     #[test]
     fn chunked_answers_and_nat_addresses() {
         assert_eq!(dechunk("5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"), "hello world");
         assert!(is_private("192.168.0.1") && is_private("100.72.1.1") && is_private("10.1.2.3"));
-        assert!(!is_private("120.158.17.217"));
+        assert!(!is_private("203.0.113.17"));
     }
 }

@@ -19,6 +19,8 @@ mod models;
 mod game;
 mod geom;
 mod hostfs;
+mod pcp; // PCP and NAT-PMP port forwarding for hosted games (dec076)
+mod natcheck; // the NAT type line of the host status (dec076)
 mod hud;
 mod input;
 mod keys;
@@ -42,6 +44,8 @@ mod hdtex; // 4K texture packs (enhanced mode)
 mod ragdoll; // ragdoll corpses (enhanced mode)
 mod upnp; // the router's port forwarding for hosted games
 mod firewall; // the Windows Firewall check for hosted games (dec047)
+mod hoststatus; // the host-time status: LAN / internet friends, firewall, router (dec076)
+mod taskdialog; // the firewall question as a native Windows TaskDialog (dec076)
 mod lamps; // the map's lamps and sun: world-fixed shadows (enhanced mode)
 
 struct TremExtension;

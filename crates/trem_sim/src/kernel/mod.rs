@@ -35,6 +35,7 @@ pub mod rng;
 pub mod session;
 pub mod sig;
 pub mod spawn;
+pub mod stun;
 pub mod svcmds;
 pub mod sv;
 pub mod svgame;

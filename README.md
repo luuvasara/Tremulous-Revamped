@@ -135,9 +135,10 @@ process; Create Server and `net_enabled 1` start a network server.
 * **Host for the internet**: Create Server → Dedicated: Internet
   (`dedicated 2`): you keep playing on it as a listen server, and it
   announces itself to the masters (`sv_master1..5`) every 5 minutes. The
-  server asks the router to forward its port by UPnP (dec046; `net_upnp 0`
-  turns it off) and prints the address internet players join at. If the
-  router does not do UPnP, forward UDP 30720 to the hosting PC yourself.
+  server asks the router to forward its port by PCP, NAT-PMP and UPnP at
+  once (dec046, dec076; `net_upnp 0` turns all three off) and prints the
+  address internet players join at. If the router does none of them,
+  forward UDP 30720 to the hosting PC yourself.
 * **Join**: the server browser (LAN / Internet / Favorites, pinged), or the
   console `connect 192.168.1.10[:30720]`, `reconnect`, `disconnect`;
   `localservers`, `globalservers 0 full empty`, `ping`, `serverstatus`,
@@ -154,14 +155,33 @@ process; Create Server and `net_enabled 1` start a network server.
   broadcast, on every network adapter's own broadcast address too. LAN
   games need no router forwarding, and the host's console prints the
   address friends can also join directly (`connect 192.168.x.y:30720`).
-* **Windows Firewall** (dec047, dec054): other PCs only reach the game if
-  Windows lets it in (Private networks for LAN, with the network itself
-  set to Private; Public for the internet). At startup and when hosting,
-  the game checks; when other PCs cannot reach it, it asks in a Windows
-  dialog: Allow (then approve the administrator prompt; a block rule
-  Windows made for the game is replaced), Not now, or Don't ask again
-  (`net_firewallPrompt 0`). The console command `firewall_allow` asks again
-  at any time.
+* **Windows Firewall** (dec047, dec054, dec076): other PCs only reach a
+  hosted game if the router lets players on the internet in (port opening:
+  PCP, NAT-PMP or UPnP; with IPv6, PCP opens the router's IPv6 firewall)
+  and Windows lets the game in (needed by every player). When you start a
+  network game the console prints one status, in that order, and a Windows
+  dialog shows it too, each time you host; if this PC's firewall keeps
+  players out it asks: Allow players
+  to join (one inbound UDP rule "Tremulous Revamped" for the exe, after the
+  UAC prompt; a block rule Windows made for the game, and the game's own
+  rules for copies that no longer exist, go in the same step), Host for my
+  home network only (LAN) (the rule "Tremulous Revamped (LAN)", local
+  subnet only; the router port is closed again), Host anyway, and a "Don't
+  ask again when I host" checkbox (`net_hostWindow 0`). Joining and the
+  LAN list normally need no rule. `firewall_allow` (or `firewall_allow lan`)
+  asks again at any time; `hosting_status` checks the router, the network
+  and the firewall again while you host and shows the dialog even after
+  "Don't ask again" (untick the box there, or `net_hostWindow 1`, to
+  have it back each time), and also writes what it found, and why a window
+  did or did not open, to `hosting_status.txt` in the game's user folder
+  (the console prints the path). The window never waits for Windows: if
+  the firewall check has not answered after 8 seconds it opens with that
+  row marked "still checking" and updates when the check ends; a window
+  that is skipped or cannot be shown says why in the console. The status also says what kind of network it is,
+  from two STUN requests sent from the game's port when you host
+  (`net_stunServers`, `net_natCheck 0` turns it off), and the IPv6 join
+  address when the PC has one: see
+  [Hosting and your network](#hosting-and-your-network).
 * **Check from a terminal**:
   `cargo run --release -p trem_sim --example server_list -- lan` or
   `-- master` (both print each server's ping, players, map and name).
@@ -242,6 +262,138 @@ process; Create Server and `net_enabled 1` start a network server.
   fires and prints what it sees. The port's client joins an original
   tremulous-legacy `tremded` (built from `re/source`) and plays (team,
   spawn, move, fire, clean disconnect).
+
+## Hosting and your network
+
+When you host, the game asks your router to open the game's port (PCP,
+NAT-PMP or UPnP: automatic port opening) and asks two public STUN servers
+what the game's address looks like from the internet (and the first one
+once more from a separate socket, like this PC's other traffic). The host status
+(console, and the Windows dialog when this PC's firewall keeps players out)
+then shows the steps in the order a player's packet passes them: **Router**,
+then **This PC's firewall**, each with its state, the join addresses (every
+port is UDP) and **Network type**, one of the types below. "What does this
+mean?" in the dialog opens this section.
+
+| Network type | Players on the internet can join? | What to do |
+|---|---|---|
+| Open — this PC has its own public address (no NAT) | Yes | Nothing. Only this PC's firewall matters. |
+| Open — the router opened the port (port mapping) | Yes | Nothing. The router opened UDP 30720 while you host. |
+| Moderate — port stays the same (cone NAT) | Not yet | Turn on UPnP (or PCP / NAT-PMP) in the router, or forward UDP 30720 to this PC. |
+| Strict — port changes per player (symmetric NAT) | Not yet | The same as Moderate. |
+| CGNAT — your provider shares one address (carrier-grade NAT) | No | Ask your provider for a public IPv4 address, use IPv6, or play on a dedicated server. |
+| Not known | Maybe | The check got no answer. Hosting may still work. |
+| Unclear — two internet connections, rare (multi-WAN / policy routing) | Maybe | Give players the game's address shown. |
+
+The network type describes the router side only. Players on your own
+network (LAN) need just this PC's firewall.
+
+### Open — this PC has its own public address (no NAT)
+
+<img src="docs/hosting/open-pc.png" width="720" alt="Open: players reach UDP 30720 on this PC directly">
+
+This PC has its own public internet address and no router in between.
+Players join at the address shown. Only this PC's firewall matters.
+
+### Open — the router opened the port (port mapping)
+
+<img src="docs/hosting/open-router.png" width="720" alt="Open: the router opened UDP 30720 for the game">
+
+Your router opened UDP 30720 for the game when you started hosting and
+closes it when you stop. Players join at the address shown.
+
+### Moderate — port stays the same (cone NAT)
+
+<img src="docs/hosting/moderate.png" width="720" alt="Moderate: the router keeps the port the same but blocks players knocking in">
+
+Your router did not open the port, but it keeps the game's port the same
+for everyone it talks to. Players cannot get in yet.
+
+**To get Open:** turn on UPnP (or PCP / NAT-PMP) in your router, and the
+game opens UDP 30720 itself the next time you host; or forward UDP 30720 to
+this PC by hand ([how to forward a port](https://portforward.com)). The game
+can see the first, not the second: after a manual forward the status still
+says Moderate and "no answer", but players can join.
+
+### Strict — port changes per player (symmetric NAT)
+
+<img src="docs/hosting/strict.png" width="720" alt="Strict: the router gives the game a new port for each player">
+
+Your router gives the game a different port for each place it talks to
+(common on office, school and mobile networks). Players cannot get in yet.
+
+**To get Open:** the same as Moderate. Turning on "static port" in the
+router as well makes it Moderate; that only matters for future features
+that connect without forwarding. Network people call these two **cone NAT**
+(Moderate) and **symmetric NAT** (Strict), see
+[RFC 4787](https://www.rfc-editor.org/rfc/rfc4787) (endpoint-independent
+and address-and-port-dependent mapping).
+
+### CGNAT — your provider shares one address (carrier-grade NAT)
+
+<img src="docs/hosting/cgnat.png" width="720" alt="CGNAT: many homes behind one shared address">
+
+Your provider puts many homes behind one internet address
+([carrier-grade NAT](https://en.wikipedia.org/wiki/Carrier-grade_NAT)).
+Port forwarding on your own router cannot help.
+
+**To get Open:** ask your provider for a public IPv4 address (often free or
+cheap), use IPv6 if you have it, or play on a dedicated server.
+
+### Unclear — two internet connections, rare (multi-WAN / policy routing)
+
+The game's internet address is not the one this PC's other traffic uses,
+or the router opened the port on another internet address than the one the
+game's traffic leaves from: the router has two internet connections. Players
+join at the address the host status shows (it names both): the router's
+when it opened the port, else the game's. Nothing is wrong with your
+network, and it is not CGNAT: both addresses are public.
+
+### Static or dynamic address: both work
+
+<img src="docs/hosting/address.png" width="720" alt="A static and a dynamic public address both work">
+
+You do not need a static (fixed) public address to host. A dynamic one can
+change now and then (after a router restart or when the provider renews
+it), so give players the address shown when you host.
+
+### IPv6
+
+<img src="docs/hosting/ipv6.png" width="720" alt="IPv6: no NAT, the router's firewall opened by PCP">
+
+If you have IPv6, players who also have IPv6 can join at the `[address]:30720`
+(UDP) shown. There is no NAT on IPv6, only the router's firewall, which PCP
+can open.
+
+### Not known
+
+<img src="docs/hosting/unknown.png" width="720" alt="Not known: the network check got no answer">
+
+The check got no answer (offline, blocked, or `net_natCheck 0`).
+
+### This PC's firewall (Windows)
+
+Windows lets other PCs reach the game only with an inbound rule. The dialog
+offers **Allow players to join** (one rule, "Tremulous Revamped", for this
+exe; Windows asks for permission), **Host for my home network only (LAN)**
+(the rule "Tremulous Revamped (LAN)", local subnet only, and the router port
+is closed again) and **Host anyway** (nobody else can join until the
+firewall is open). `firewall_allow` in the console does the same later. If
+you forward UDP 30720 by hand, forward it to this PC's LAN address, shown as
+`LAN (UDP)` in the status.
+
+### How it was checked
+
+The game sent two small STUN requests from its own port
+(stun.cloudflare.com, stun.l.google.com; change them with `net_stunServers`,
+turn the check off with `net_natCheck 0`). Nothing else is sent.
+
+### More
+
+- [How to forward a port](https://portforward.com)
+- [How NAT traversal works (Tailscale)](https://tailscale.com/blog/how-nat-traversal-works)
+- [Carrier-grade NAT (Wikipedia)](https://en.wikipedia.org/wiki/Carrier-grade_NAT)
+- [The terms: cone, symmetric (RFC 4787)](https://www.rfc-editor.org/rfc/rfc4787)
 
 ## Build
 
@@ -363,8 +515,9 @@ What the evidence covers:
   * Downloads are UDP only (no cURL).
   * An original client joining the port's server is untested; the
     server's packets come from the same verified msg/netchan code.
-  * UPnP is untested on a router that answers it (the test router did
-    not), and LAN play between two PCs is verified on one PC only (dec045).
+  * UPnP, PCP and NAT-PMP are tested against fake routers only, and the
+    network check against fake STUN servers; LAN play between two PCs is
+    verified on one PC only (dec045).
   * Server-side deviations (events as temp entities, the `servermenu`
     notice command, ClientBegin at connect time, sv_fps 60) are listed in
     dec033.

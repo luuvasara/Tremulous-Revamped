@@ -461,6 +461,10 @@ pub struct Net {
     queue: VecDeque<(i32, NetSrc, NetAdr, Vec<u8>)>,
     /// a simulated `Sys_Milliseconds` (tests); None: the real clock
     pub clock: Option<i32>,
+    /// STUN transactions sent from a game socket (stun.rs): (server, id)
+    stun_wait: Vec<(SocketAddr, [u8; 12])>,
+    /// their answers, taken out before the Q3 packet path
+    stun_replies: Vec<(SocketAddr, Vec<u8>)>,
 }
 
 /// `Sys_Milliseconds`: milliseconds since the first call.
@@ -491,6 +495,8 @@ impl Default for Net {
             packet_delay: [0; 2],
             queue: VecDeque::new(),
             clock: None,
+            stun_wait: Vec::new(),
+            stun_replies: Vec::new(),
         }
     }
 }
@@ -784,6 +790,11 @@ impl Net {
             loop {
                 match s.recv_from(&mut buf) {
                     Ok((n, from)) => {
+                        // the answer to our STUN request (dec076), not a Q3 packet
+                        if !self.stun_wait.is_empty() && super::stun::answers(&self.stun_wait, &from, &buf[..n]) {
+                            self.stun_replies.push((from, buf[..n].to_vec()));
+                            continue;
+                        }
                         if self.drop_sim > 0 {
                             self.drop_seed = self.drop_seed.wrapping_mul(1103515245).wrapping_add(12345);
                             if (self.drop_seed >> 16) % 100 < self.drop_sim {
@@ -802,6 +813,27 @@ impl Net {
             }
         }
         None
+    }
+
+    /// A STUN Binding request to `to` from `src`'s game socket (the host's
+    /// NAT check, dec076); its answer goes to `take_stun_replies`.
+    pub fn stun_send(&mut self, src: NetSrc, to: SocketAddr, txid: [u8; 12]) {
+        if !self.stun_wait.contains(&(to, txid)) {
+            self.stun_wait.push((to, txid));
+        }
+        let d = super::stun::binding_request(&txid);
+        self.sys_send_packet(&d, &NetAdr::from_socket(&to), src);
+    }
+
+    /// The STUN answers received since the last call.
+    pub fn take_stun_replies(&mut self) -> Vec<(SocketAddr, Vec<u8>)> {
+        std::mem::take(&mut self.stun_replies)
+    }
+
+    /// The check is over: later STUN-shaped packets take the Q3 path again.
+    pub fn stun_done(&mut self) {
+        self.stun_wait.clear();
+        self.stun_replies.clear();
     }
 
     /// `NET_OutOfBandPrint`: 0xffffffff then the text.

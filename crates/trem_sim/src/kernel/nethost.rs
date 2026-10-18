@@ -101,12 +101,12 @@ impl NetHost {
                         self.out.push_str("WARNING: no network socket: only the loopback client can join\n");
                     }
                     else if let Some(p) = self.net.port(NetSrc::Server) {
-                        // dec045: where the players on this network join
-                        for a in netchan::local_ipv4() {
-                            self.out.push_str(&format!("LAN players can join at {a}:{p} (connect {a}:{p})\n"));
-                        }
-                        if cfg!(windows) {
-                            self.out.push_str("If they cannot see this server: allow the game through Windows Firewall on Private networks, with this network set to Private\n");
+                        // dec045: where the players on this network join (a dedicated
+                        // server; a listen server's host sees them in the host-time status)
+                        if !listen {
+                            for a in netchan::local_ipv4() {
+                                self.out.push_str(&format!("LAN players can join at {a}:{p} (connect {a}:{p})\n"));
+                            }
                         }
                     }
                 }
