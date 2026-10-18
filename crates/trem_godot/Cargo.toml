@@ -17,3 +17,6 @@ godot = { version = "0.5", features = ["api-4-7", "experimental-godot-api"] }
 
 [build-dependencies]
 cc = "1"
+
+[dev-dependencies]
+zip = { version = "2", default-features = false, features = ["deflate"] }

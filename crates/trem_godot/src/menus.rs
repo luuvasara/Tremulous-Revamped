@@ -8317,36 +8317,23 @@ impl TremMenus {
 }
 
 // =====================================================================
-// tests (legacy data: /tmp/claude-0/datalegacy)
+// tests (legacy data: see testdata.rs)
 // =====================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const DATA: &str = "/tmp/claude-0/datalegacy";
-
     fn read(p: &str) -> Option<String> {
-        std::fs::read_to_string(std::path::Path::new(DATA).join(p)).ok()
-    }
-
-    fn have_data() -> bool {
-        let ok = std::path::Path::new(DATA).join("ui/ingame.txt").exists();
-        if !ok {
-            eprintln!("{DATA} missing: skipping");
-        }
-        ok
+        crate::testdata::legacy().text(p)
     }
 
     #[test]
     fn port_audio_page_loads_and_options_link_to_it() {
-        // the 1.1.0 data's ui/ (unzipped from data-1.1.0.pk3)
-        const D110: &str = "/tmp/claude-0/data110";
-        let read = |p: &str| std::fs::read_to_string(std::path::Path::new(D110).join(p)).ok();
-        let Some(opts) = read("ui/ingame_options.menu") else {
-            eprintln!("{D110} missing: skipping");
-            return;
-        };
+        // the 1.1.0 data's ui/ (data-1.1.0.pk3)
+        let d110 = crate::testdata::d110();
+        let read = |p: &str| d110.text(p);
+        let opts = d110.must_text("ui/ingame_options.menu");
         let patched = patch_sound_options(&opts);
         assert!(!patched.contains("s_useOpenAL") && patched.contains("open port_audio"));
         let mut r = |p: &str| match p {
@@ -8416,7 +8403,7 @@ mod tests {
     }
 
     fn fonts() -> Fonts {
-        let f = |n: i32| parse_font_dat(&std::fs::read(format!("{DATA}/fonts/fontImage_{n}.dat")).unwrap()).unwrap();
+        let f = |n: i32| parse_font_dat(&crate::testdata::legacy().must_read(&format!("fonts/fontImage_{n}.dat"))).unwrap();
         Fonts::new(f(20), f(26), f(34))
     }
 
@@ -8469,9 +8456,6 @@ mod tests {
 
     #[test]
     fn menus_legacy_lists_load() {
-        if !have_data() {
-            return;
-        }
         let mut r = |p: &str| read(p);
         let files = menu_list_files(&mut r).unwrap();
         // ui/menus.txt, ui/ingame.txt, ui/tremulous.txt (UI_Init's order)
@@ -8528,9 +8512,6 @@ mod tests {
 
     #[test]
     fn menus_items_post_parse() {
-        if !have_data() {
-            return;
-        }
         let u = ui(Team::Humans);
         // ownerdraw items are ITEM_TYPE_OWNERDRAW (not the 1.1 number 8 = LISTBOX)
         let pane = mref(&u, "tremulous_teamselect", "infopane");
@@ -8569,9 +8550,6 @@ mod tests {
 
     #[test]
     fn menus_aspect_compensation() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::Humans);
         let bar = u.find_menu("ingame").unwrap();
         let game = mref(&u, "ingame", "game");
@@ -8600,9 +8578,6 @@ mod tests {
 
     #[test]
     fn menus_text_extents() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::Humans);
         u.set_aspect(0.75);
         u.open_ingame();
@@ -8626,9 +8601,6 @@ mod tests {
 
     #[test]
     fn menus_team_select_flow() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::None);
         u.menus_activate_by_name("tremulous_teamselect");
         assert_eq!(u.top_menu(), Some("tremulous_teamselect"));
@@ -8662,9 +8634,6 @@ mod tests {
 
     #[test]
     fn menus_ingame_game_vote_and_ignore() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::Humans);
         u.open_ingame();
         let g = mref(&u, "ingame", "game");
@@ -8717,9 +8686,6 @@ mod tests {
 
     #[test]
     fn menus_help_and_leave() {
-        if !have_data() {
-            return;
-        }
         let help = parse_help(&read("ui/help.txt").unwrap());
         assert!(help.len() > 5);
         assert_eq!(help[0].0, "^3Welcome^7");
@@ -8752,9 +8718,6 @@ mod tests {
 
     #[test]
     fn menus_say_field() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::Humans);
         u.message_mode(false);
         assert_eq!(u.top_menu(), Some("say"));
@@ -8790,9 +8753,6 @@ mod tests {
 
     #[test]
     fn menus_armoury_and_dialogs() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::Humans);
         u.view.player.stats[Stat::Weapon as usize] = WeaponId::Rifle as i32;
         u.menus_activate_by_name("tremulous_humanarmoury");
@@ -8901,9 +8861,6 @@ mod tests {
 
     #[test]
     fn menus_text_wrap() {
-        if !have_data() {
-            return;
-        }
         let f = fonts();
         let text = "^3Welcome^7 to the wrapped text block of the legacy ui, which breaks lines at blanks.\n\nForced break.";
         let w = item_text_wrap(&f, text, 0.33, 150.0, 1.0);
@@ -8921,9 +8878,6 @@ mod tests {
 
     #[test]
     fn menus_bind_items() {
-        if !have_data() {
-            return;
-        }
         use crate::keys::{key_string_to_keynum as kn, Keys, K_ENTER, K_MOUSE1};
         let mut u = ui(Team::Humans);
         let mut keys = Keys::default();
@@ -8992,9 +8946,6 @@ mod tests {
     /// focus stays), the stick's arrow keys move it.
     #[test]
     fn menus_joystick_keys() {
-        if !have_data() {
-            return;
-        }
         use crate::keys::{key_string_to_keynum as kn, K_DOWNARROW, K_JOY1};
         const K_JOY4: i32 = K_JOY1 + 3;
         let mut u = ui(Team::Humans);
@@ -9025,9 +8976,6 @@ mod tests {
 
     #[test]
     fn menus_scoreboard() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::Humans);
         u.view.scores = Scoreboard {
             rows: vec![
@@ -9068,9 +9016,6 @@ mod tests {
 
     #[test]
     fn menus_options_cvars() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::Humans);
         u.set_aspect(0.75);
         u.open_ingame();
@@ -9112,9 +9057,6 @@ mod tests {
 
     #[test]
     fn menus_main_menu_and_splash_model() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::None);
         assert!(!u.is_open(), "UI_Init closes every menu (main.menu is visible)");
         u.set_active_menu(UiMenuCommand::Main);
@@ -9145,9 +9087,6 @@ mod tests {
 
     #[test]
     fn menus_create_server_flow() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::None);
         u.fs_files = vec!["levelshots/atcs.jpg".into(), "video/splash.roq".into()];
         u.set_active_menu(UiMenuCommand::Main);
@@ -9185,9 +9124,6 @@ mod tests {
 
     #[test]
     fn menus_server_browser_offline() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::None);
         u.local_time = [9, 2, 2026, 7, 5];
         u.unix_time = 1_790_000_000;
@@ -9260,13 +9196,9 @@ mod tests {
         // dec040: the browser tags vanilla 1.1 / legacy 1.3 servers, filters
         // them (ui_browserProtocol, the joinserver menu's "Version:") and
         // joins each with its own protocol
-        if !have_data() {
-            return;
-        }
         // the menus as re/source/assets/ui has them (packed into
         // data-legacy-assets.pk3), the rest from the data folder
-        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../re/source/assets");
-        let mut u = ui_from(Team::None, &mut |p: &str| std::fs::read_to_string(repo.join(p)).ok().or_else(|| read(p)));
+        let mut u = ui_from(Team::None, &mut |p: &str| read(p));
         let vp = mref(&u, "joinserver", "viewProtocol");
         assert_eq!(u.it(vp).def.cvar.as_deref(), Some("ui_browserProtocol"));
         let srv = |addr: &str, name: &str, protocol: i32| ServerInfo { addr: addr.into(), host_name: name.into(), map_name: "atcs".into(), game: "base".into(), clients: 1, max_clients: 8, ping: 40, visible: true, protocol };
@@ -9298,9 +9230,6 @@ mod tests {
 
     #[test]
     fn menus_mods_demos_movies_resolutions() {
-        if !have_data() {
-            return;
-        }
         let mut u = ui(Team::None);
         u.fs_files = vec!["video/splash.roq".into(), "video/intro.RoQ".into(), "demos/duel.dm_71".into(), "demos/old.dm_68".into(), "maps/atcs.bsp".into()];
         u.mod_dirs = vec![("mymod".into(), "My Mod".into())];
@@ -9348,9 +9277,6 @@ mod tests {
 
     #[test]
     fn menus_fades_transitions_orbits() {
-        if !have_data() {
-            return;
-        }
         // Fade: clamp 1.0, cycle 1 ms, 0.1 a step (main.menu's assetGlobalDef)
         let (mut flags, mut a, mut next) = (WINDOW_VISIBLE | WINDOW_FADINGIN, 0.0f32, 0);
         for t in 1..=12 {

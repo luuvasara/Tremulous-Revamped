@@ -11,7 +11,7 @@ use trem_sim::kernel::{bsp, client};
 
 fn map(name: &str) -> Option<World> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../godot/base/map-{name}-1.1.0.pk3"));
-    let f = std::fs::File::open(p).ok()?;
+    let f = std::fs::File::open(&p).unwrap_or_else(|e| panic!("{}: {e} (the pk3 is tracked in git, restore it)", p.display()));
     let mut z = zip::ZipArchive::new(f).ok()?;
     let mut e = z.by_name(&format!("maps/{name}.bsp")).ok()?;
     let mut v = Vec::new();

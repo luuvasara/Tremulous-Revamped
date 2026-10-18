@@ -746,26 +746,15 @@ mod tests {
     use crate::particles::AttachPos;
 
     fn data_files() -> Vec<(String, String)> {
-        let dir = std::path::Path::new("/tmp/claude-0/data110/scripts");
-        let mut v = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                let name = p.file_name().unwrap().to_string_lossy().to_string();
-                if name.ends_with(".trail") || name.ends_with(".particle") {
-                    v.push((format!("scripts/{name}"), std::fs::read_to_string(&p).unwrap()));
-                }
-            }
-        }
+        let d = crate::testdata::d110();
+        let v: Vec<(String, String)> = d.list("scripts", &[".particle", ".trail"]).into_iter().map(|f| (f.clone(), d.must_text(&f))).collect();
+        assert!(!v.is_empty(), "no scripts/*.particle or *.trail in the test data (see testdata.rs)");
         v
     }
 
     #[test]
     fn trails_parse_all_data() {
         let files = data_files();
-        if files.is_empty() {
-            return;
-        }
         let lib = TrailLib::load(&files);
         assert!(lib.errors.is_empty(), "{:?}", lib.errors);
         assert_eq!(lib.systems.len(), 3);
@@ -804,9 +793,6 @@ mod tests {
     #[test]
     fn missile_trail_follows_and_shrinks() {
         let files = data_files();
-        if files.is_empty() {
-            return;
-        }
         let lib = TrailLib::load(&files);
         let ps = Particles::new();
         let mut tr = Trails::new();
@@ -843,9 +829,6 @@ mod tests {
     #[test]
     fn zap_between_two_entities() {
         let files = data_files();
-        if files.is_empty() {
-            return;
-        }
         let lib = TrailLib::load(&files);
         let ps = Particles::new();
         let mut tr = Trails::new();

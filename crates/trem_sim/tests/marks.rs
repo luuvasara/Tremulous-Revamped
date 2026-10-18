@@ -167,10 +167,7 @@ fn marks_on_official_maps() {
     use std::io::Read;
     for map in ["atcs", "nexus6"] {
         let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../godot/base/map-{map}-1.1.0.pk3"));
-        let Ok(f) = std::fs::File::open(p) else {
-            println!("{map}: not found, skipped");
-            continue;
-        };
+        let f = std::fs::File::open(&p).unwrap_or_else(|e| panic!("{}: {e} (the pk3 is tracked in git, restore it)", p.display()));
         let mut z = zip::ZipArchive::new(f).unwrap();
         let mut v = Vec::new();
         z.by_name(&format!("maps/{map}.bsp")).unwrap().read_to_end(&mut v).unwrap();
@@ -212,10 +209,7 @@ fn marks_on_patches_of_niveus() {
     use std::io::Read;
     let map = "niveus";
     let p = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../godot/base/map-{map}-1.1.0.pk3"));
-    let Ok(f) = std::fs::File::open(p) else {
-        println!("{map}: not found, skipped");
-        return;
-    };
+    let f = std::fs::File::open(&p).unwrap_or_else(|e| panic!("{}: {e} (the pk3 is tracked in git, restore it)", p.display()));
     let mut z = zip::ZipArchive::new(f).unwrap();
     let mut v = Vec::new();
     z.by_name(&format!("maps/{map}.bsp")).unwrap().read_to_end(&mut v).unwrap();
@@ -268,10 +262,8 @@ fn patch_grids_match_the_original_tr_curve() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut checked = 0;
     for map in ["atcs", "arachnid2", "karith", "nexus6", "niveus", "transit", "tremor", "uncreation"] {
-        let Ok(f) = std::fs::File::open(root.join(format!("godot/base/map-{map}-1.1.0.pk3"))) else {
-            println!("{map}: not found, skipped");
-            continue;
-        };
+        let pk3 = root.join(format!("godot/base/map-{map}-1.1.0.pk3"));
+        let f = std::fs::File::open(&pk3).unwrap_or_else(|e| panic!("{}: {e} (the pk3 is tracked in git, restore it)", pk3.display()));
         let mut z = zip::ZipArchive::new(f).unwrap();
         let mut v = Vec::new();
         z.by_name(&format!("maps/{map}.bsp")).unwrap().read_to_end(&mut v).unwrap();

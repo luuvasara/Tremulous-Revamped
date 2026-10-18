@@ -1322,8 +1322,9 @@ mod lightgrid_tests {
     use super::*;
     /// TREM_BSP=<file.bsp>: light grid gives plausible light at every map placement.
     #[test]
+    #[ignore = "needs TREM_BSP=<file.bsp>; run with --ignored"]
     fn lightgrid_samples_real_map() {
-        let Ok(p) = std::env::var("TREM_BSP") else { return };
+        let p = std::env::var("TREM_BSP").expect("set TREM_BSP to a .bsp file");
         let bsp = trem_sim::kernel::bsp::parse(&std::fs::read(p).unwrap()).unwrap();
         let g = LightGrid::from_bsp(&bsp).expect("grid");
         println!("grid origin {:?} size {:?} bounds {:?}", g.origin, g.size, g.bounds);

@@ -4986,17 +4986,10 @@ mod tests {
     }
 
     /// what the game loads: data-1.1.0.pk3 + the legacy assets overlay
-    const DATA: &str = "/tmp/claude-0/datalegacy";
-
-    fn load(name: &str) -> Option<MenuSet> {
-        let root = std::path::Path::new(DATA);
-        if !root.join("ui").exists() {
-            eprintln!("{DATA} missing: skipping");
-            return None;
-        }
-        let text = std::fs::read_to_string(root.join("ui").join(name)).expect("menu file");
-        let set = parse_menus(&text, &mut |p| std::fs::read_to_string(root.join(p)).ok()).expect("parse");
-        Some(set)
+    fn load(name: &str) -> MenuSet {
+        let d = crate::testdata::legacy();
+        let text = d.must_text(&format!("ui/{name}"));
+        parse_menus(&text, &mut |p| d.text(p)).expect("parse")
     }
 
     fn item<'a>(m: &'a MenuDef, name: &str) -> &'a ItemDef {
@@ -5007,16 +5000,13 @@ mod tests {
     /// assets overlay, re/harness/pack_assets.py).
     #[test]
     fn legacy_menus_parse() {
-        let root = std::path::Path::new("/tmp/claude-0/datalegacy");
-        if !root.join("ui/hud.txt").exists() {
-            return;
-        }
+        let d = crate::testdata::legacy();
         let mut bad = Vec::new();
         for list in ["ui/hud.txt", "ui/menus.txt", "ui/ingame.txt", "ui/tremulous.txt"] {
-            let Ok(t) = std::fs::read_to_string(root.join(list)) else { continue };
+            let t = d.must_text(list);
             for f in parse_menu_list(&t) {
-                let text = std::fs::read_to_string(root.join(&f)).unwrap_or_default();
-                match parse_menus(&text, &mut |p| std::fs::read_to_string(root.join(p)).ok()) {
+                let text = d.must_text(&f);
+                match parse_menus(&text, &mut |p| d.text(p)) {
                     Ok(set) if !set.unknown.is_empty() => bad.push(format!("{f}: unknown {:?}", set.unknown)),
                     Ok(_) => {}
                     Err(e) => bad.push(format!("{f}: {e}")),
@@ -5028,7 +5018,7 @@ mod tests {
 
     #[test]
     fn hud_menudef_defines() {
-        let Some(set) = load("tremulous_default_hud.menu") else { return };
+        let set = load("tremulous_default_hud.menu");
         assert_eq!(set.define_int("WINDOW_STYLE_SHADER"), Some(3));
         assert_eq!(set.define_int("ALIGN_RIGHT"), Some(2));
         assert_eq!(set.define_int("VALIGN_TOP"), Some(2));
@@ -5056,7 +5046,7 @@ mod tests {
         // and every ownerdraw the HUD menus use is implemented, but the
         // engine-only ones
         for f in ["tremulous_human_hud.menu", "tremulous_alien_general_hud.menu", "tremulous_alien_builder_hud.menu", "tremulous_default_hud.menu"] {
-            let s = load(f).unwrap();
+            let s = load(f);
             let skip: Vec<i32> = ["CG_LAGOMETER", "CG_SNAPSHOT", "CG_DEMO_PLAYBACK", "CG_DEMO_RECORDING"].iter().map(|n| s.define_int(n).unwrap()).collect();
             for it in s.menus.iter().flat_map(|m| &m.items).filter(|i| i.item_type == ITEM_TYPE_OWNERDRAW) {
                 assert!(od.contains_key(&it.ownerdraw) || skip.contains(&it.ownerdraw), "{f}: {} ownerdraw {}", it.name, it.ownerdraw);
@@ -5066,7 +5056,7 @@ mod tests {
 
     #[test]
     fn hud_human_menu() {
-        let Some(set) = load("tremulous_human_hud.menu") else { return };
+        let set = load("tremulous_human_hud.menu");
         assert!(set.unknown.is_empty(), "unknown keywords {:?}", set.unknown);
         assert_eq!(set.menus.len(), 1);
         let m = set.menu("human_hud").unwrap();
@@ -5115,7 +5105,7 @@ mod tests {
 
     #[test]
     fn hud_alien_menus() {
-        let Some(g) = load("tremulous_alien_general_hud.menu") else { return };
+        let g = load("tremulous_alien_general_hud.menu");
         assert!(g.unknown.is_empty(), "unknown keywords {:?}", g.unknown);
         let m = g.menu("alien_general_hud").unwrap();
         assert_eq!(m.items.len(), 34);
@@ -5133,7 +5123,7 @@ mod tests {
         // the crosshair item takes the HUD colour
         assert_eq!(item(m, "crosshair").fore, [1.0, 0.0, 0.0, 0.35]);
 
-        let Some(b) = load("tremulous_alien_builder_hud.menu") else { return };
+        let b = load("tremulous_alien_builder_hud.menu");
         let m = b.menu("alien_builder_hud").unwrap();
         assert_eq!(m.items.len(), 35);
         assert!(m.items.iter().all(|i| i.name != "blob"));
@@ -5144,7 +5134,7 @@ mod tests {
 
     #[test]
     fn hud_default_menu_and_list() {
-        let Some(d) = load("tremulous_default_hud.menu") else { return };
+        let d = load("tremulous_default_hud.menu");
         let m = d.menu("default_hud").unwrap();
         assert_eq!(m.items.len(), 15);
         assert_eq!(item(m, "playername").ownerdraw, 53);
@@ -5154,13 +5144,13 @@ mod tests {
         assert_eq!((st.item_type, st.text.as_deref(), st.text_align, st.text_valign), (0, Some("SPECTATOR"), ITEM_ALIGN_CENTER, VALIGN_TOP));
         assert_eq!(st.rect, [200.0, 415.0, 240.0, 25.0]);
         assert_eq!(item(m, "fps").fore, [1.0, 1.0, 1.0, 1.0]);
-        let list = parse_menu_list(&std::fs::read_to_string(format!("{DATA}/ui/hud.txt")).unwrap());
+        let list = parse_menu_list(&crate::testdata::legacy().must_text("ui/hud.txt"));
         assert_eq!(list, ["ui/tremulous_human_hud.menu", "ui/tremulous_alien_builder_hud.menu", "ui/tremulous_alien_general_hud.menu", "ui/tremulous_default_hud.menu", "ui/teamscore.menu", "ui/loading.menu"]);
         // the four HUDs into one set: the class hudName menus are all found
         let mut all = MenuSet::default();
         for f in &list[..4] {
-            let t = std::fs::read_to_string(format!("{DATA}/{f}")).unwrap();
-            parse_menus_into(&mut all, &t, &mut |p| std::fs::read_to_string(format!("{DATA}/{p}")).ok()).unwrap();
+            let t = crate::testdata::legacy().must_text(&f);
+            parse_menus_into(&mut all, &t, &mut |p| crate::testdata::legacy().text(p)).unwrap();
         }
         for c in ClassId::ALL {
             if let Some(h) = c.cold().hud {
@@ -5172,7 +5162,7 @@ mod tests {
     /// Menu_AspectCompensate at 16:9 (aspectScale 0.75).
     #[test]
     fn hud_aspect_compensate() {
-        let Some(set) = load("tremulous_human_hud.menu") else { return };
+        let set = load("tremulous_human_hud.menu");
         let m = set.menu("human_hud").unwrap().aspect_compensated(0.75);
         // ASPECT_NONE menu: each item by its own bias
         assert_eq!(m.rect, [0.0, 0.0, 640.0, 480.0]);
@@ -5183,7 +5173,7 @@ mod tests {
         assert_eq!(item(&m, "teamoverlay").rect, [10.0, 175.0, 200.0, 128.0]);
         // a biased menu (teamscore_menu, ALIGN_CENTER by Menu_Init): the
         // menu rect is aspectised, item client rects scaled
-        let Some(ts) = load("teamscore.menu") else { return };
+        let ts = load("teamscore.menu");
         let t = ts.menu("teamscore_menu").unwrap();
         assert_eq!(t.rect, [70.0, 71.0, 500.0, 338.0]);
         let c = t.aspect_compensated(0.75);
@@ -5195,7 +5185,7 @@ mod tests {
     }
 
     fn fonts() -> Option<HudFonts> {
-        let f = |n: i32| std::fs::read(format!("{DATA}/fonts/fontImage_{n}.dat")).ok().and_then(|d| parse_font_dat(&d));
+        let f = |n: i32| parse_font_dat(&crate::testdata::legacy().must_read(&format!("fonts/fontImage_{n}.dat")));
         Some(HudFonts { small: f(20)?, text: f(26)?, big: f(34)? })
     }
 
@@ -5245,7 +5235,7 @@ mod tests {
     /// CG_BuildableStatusParse on the legacy buildstat.cfg files.
     #[test]
     fn loading_menu_ownerdraws() {
-        let Some(set) = load("loading.menu") else { return };
+        let set = load("loading.menu");
         let od = ownerdraw_table(&set);
         let m = set.menu("Loading").expect("Loading menu");
         let kinds: Vec<Od> = m.items.iter().filter(|i| i.item_type == ITEM_TYPE_OWNERDRAW).filter_map(|i| od.get(&i.ownerdraw).copied()).collect();
@@ -5278,7 +5268,7 @@ mod tests {
 
     #[test]
     fn hud_buildstat_parse() {
-        let Ok(h) = std::fs::read_to_string(format!("{DATA}/ui/assets/human/buildstat.cfg")) else { return };
+        let h = crate::testdata::legacy().must_text("ui/assets/human/buildstat.cfg");
         let bs = buildable_status_parse(&h);
         assert!(bs.loaded);
         assert_eq!(bs.frame_shader.as_deref(), Some("ui/assets/human/buildstat/frame"));
@@ -5290,7 +5280,7 @@ mod tests {
         assert_eq!(bs.health_low_color, [0.27, 0.49, 0.55, 1.0]);
         assert_eq!((bs.vertical_margin, bs.horizontal_margin), (0.5, 1.0));
         assert_eq!((bs.fore_color, bs.back_color), ([0.0, 0.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]));
-        let a = buildable_status_parse(&std::fs::read_to_string(format!("{DATA}/ui/assets/alien/buildstat.cfg")).unwrap());
+        let a = buildable_status_parse(&crate::testdata::legacy().must_text("ui/assets/alien/buildstat.cfg"));
         assert!(a.loaded);
         assert_eq!(a.overlay_shader.as_deref(), Some("ui/assets/alien/buildstat/overlay"));
         assert_eq!((a.overlay_width, a.overlay_height), (156, 36));
@@ -5364,7 +5354,7 @@ mod tests {
 
     #[test]
     fn hud_crosshair_shader() {
-        let Ok(t) = std::fs::read_to_string(format!("{DATA}/scripts/crosshairs.shader")) else { return };
+        let t = crate::testdata::legacy().must_text("scripts/crosshairs.shader");
         let r = shader_stages_2d(&t, "gfx/2d/crosshair-rifle_s").unwrap();
         // legacy crosshairs are `rgbGen vertex`: CG_DrawCrosshair colours them
         assert_eq!(r, vec![Stage2D { image: "gfx/2d/crosshair-rifle.tga".into(), color: None, rotate: 0.0 }]);

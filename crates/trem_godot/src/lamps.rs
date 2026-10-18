@@ -210,11 +210,12 @@ mod tests {
     }
 
     /// The shipped maps (their pk3s unpacked in $TREM_MAPDATA: maps/*.bsp,
-    /// scripts/*.shader; skipped without it): a dozen directions fit most
+    /// scripts/*.shader; the test is #[ignore]d, and fails if run without it): a dozen directions fit most
     /// of each map's light.
     #[test]
+    #[ignore = "needs TREM_MAPDATA=<the maps\' pk3s unpacked>; run with --ignored"]
     fn shipped_maps_fit_their_directions() {
-        let Ok(dir) = std::env::var("TREM_MAPDATA") else { return };
+        let dir = std::env::var("TREM_MAPDATA").expect("set TREM_MAPDATA to a folder holding the maps' pk3s unpacked (maps/*.bsp, scripts/*.shader)");
         let mut shaders = std::collections::HashMap::new();
         let mut scripts: Vec<_> = std::fs::read_dir(format!("{dir}/scripts")).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).collect();
         scripts.sort();

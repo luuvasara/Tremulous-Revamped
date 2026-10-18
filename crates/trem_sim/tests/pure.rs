@@ -34,10 +34,7 @@ fn oracle_lines(pk3s: &[PathBuf]) -> String {
 #[test]
 fn data_pk3_checksums_match_the_c_oracle() {
     let pk3 = root().join("godot/base/data-1.1.0.pk3");
-    if !pk3.exists() {
-        eprintln!("skipped: {} missing", pk3.display());
-        return;
-    }
+    assert!(pk3.exists(), "{} is missing: it is tracked in git, restore it", pk3.display());
     let text = oracle_lines(&[pk3.clone()]);
     let want = std::fs::read_to_string(root().join("re/traces/pak.sha256")).unwrap();
     let got = format!("{:x}", Sha256::digest(text.as_bytes()));
@@ -56,9 +53,7 @@ fn data_pk3_checksums_match_the_c_oracle() {
 #[test]
 fn base_folder_pure_strings() {
     let base = root().join("godot/base");
-    if !base.join("data-1.1.0.pk3").exists() {
-        return;
-    }
+    assert!(base.join("data-1.1.0.pk3").exists(), "{} is missing: it is tracked in git, restore it", base.join("data-1.1.0.pk3").display());
     let mut sv = PakSet::new(&[(base.clone(), "base".into())]);
     sv.restart(4242);
     assert!(sv.reference("maps/atcs.bsp"));

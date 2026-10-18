@@ -1125,7 +1125,7 @@ mod tests {
     #[test]
     fn the_shipped_rigs_load() {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../godot/data/rigs.txt");
-        let Ok(t) = std::fs::read_to_string(&p) else { return };
+        let t = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{} is tracked in git but unreadable: {e}", p.display()));
         let rigs = parse_rigs(&t);
         for m in ["human_base", "human_bsuit", "builder", "level0", "level1", "level2", "level3", "level4"] {
             let r = rigs.get(m).unwrap_or_else(|| panic!("{m} missing"));
@@ -1228,7 +1228,7 @@ mod tests {
     #[test]
     fn the_shipped_human_rigs_have_anatomical_joints() {
         let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../godot/data/rigs.txt");
-        let Ok(t) = std::fs::read_to_string(&p) else { return };
+        let t = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{} is tracked in git but unreadable: {e}", p.display()));
         let rigs = parse_rigs(&t);
         for m in ["human_base", "human_bsuit"] {
             let r = &rigs[m];

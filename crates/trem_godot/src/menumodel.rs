@@ -425,9 +425,7 @@ mod tests {
 
     #[test]
     fn menumodel_splash_shader_stages() {
-        let text = std::fs::read_to_string("/tmp/claude-0/datalegacy/scripts/splash.shader").unwrap_or_else(|_| {
-            "models/splash/nebula\n{\n\tnopicmip\n\t{\n\t\tmap models/splash/nebula.tga\n\t\tblendfunc add\n\t\trgbGen wave sin 0.5 1 5 0.05 \n\t\ttcMod scale -1 1\n\t}\n\t{\n\t\tmap models/splash/nebula_2.tga\n\t\tblendfunc add\n\t\trgbGen wave sin 0.3 1 2.5 0.05 \n\t\ttcMod scale -1 1\n\t}\n}\nmodels/splash/trem_black\n{\n\t{\n\t\tmap ui/assets/title.tga\n\t\tblendfunc blend\n\t\trgbGen identity\n\t}\n}\n".to_string()
-        });
+        let text = crate::testdata::legacy().must_text("scripts/splash.shader");
         let n = parse_stages(&text, "models/splash/nebula").expect("nebula");
         assert_eq!(n.len(), 2);
         assert_eq!(n[0].map, "models/splash/nebula.tga");

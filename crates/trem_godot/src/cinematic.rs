@@ -740,8 +740,6 @@ pub fn play_cinematic_bits(arg: &str, s: &str) -> i32 {
 mod tests {
     use super::*;
 
-    const SPLASH: &str = "/tmp/claude-0/datalegacy/video/splash.roq";
-
     #[test]
     fn cin_yuv_tables_and_rll() {
         let t = Tables::new();
@@ -766,7 +764,7 @@ mod tests {
 
     #[test]
     fn cin_splash_decodes() {
-        let Ok(data) = std::fs::read(SPLASH) else { return };
+        let data = crate::testdata::legacy().must_read("video/splash.roq");
         let total_sound: usize = {
             let mut p = 8;
             let mut n = 0;

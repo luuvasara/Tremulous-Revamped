@@ -14,6 +14,8 @@ mod mapents;
 mod marks;
 mod menumodel;
 mod menus;
+#[cfg(test)]
+mod testdata; // game data for the unit tests: env var or the tracked pk3s, never a silent skip
 mod md3;
 mod models;
 mod game;

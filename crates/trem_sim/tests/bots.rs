@@ -134,7 +134,7 @@ fn bots_play_the_official_maps() {
     for m in OFFICIAL_MAPS {
         match play(m, true) {
             Some(b) => bad.extend(b),
-            None => println!("{m}: not found, skipped"),
+            None => panic!("{m}: map not found (godot/base/map-{m}-1.1.0.pk3 or $TREM_BSP_DIR/{m}.bsp)"),
         }
     }
     assert!(bad.is_empty(), "{bad:#?}");
@@ -182,10 +182,7 @@ fn bots_are_balanced_on_the_official_maps() {
     let mut all = Vec::new();
     for m in OFFICIAL_MAPS {
         for seed in 0..BALANCE_SEEDS {
-            let Some(mut w) = bot_match::load(m) else {
-                println!("{m}: not found, skipped");
-                break;
-            };
+            let mut w = bot_match::load(m).unwrap_or_else(|| panic!("{m}: map not found (godot/base/map-{m}-1.1.0.pk3 or $TREM_BSP_DIR/{m}.bsp)"));
             bot_match::seed(&mut w, seed);
             let r = bot_match::run(&mut w, m, 3, MATCH_MS, false);
             println!("seed {seed} {}", r.line());

@@ -6,7 +6,7 @@
 //!   cargo run --release -p trem_sim --example cm_query MAP.bsp 30000 7 DIR
 //!   re/harness/cm_ref MAP.bsp < DIR/queries.txt | sha256sum
 //!
-//! Maps come from godot/base/map-*.pk3; the test is skipped without them.
+//! Maps come from godot/base/map-*.pk3 (tracked in git); the test fails without them.
 
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -36,14 +36,14 @@ fn bsp_from_pk3(path: &std::path::Path) -> Option<(String, Vec<u8>)> {
 #[test]
 fn real_maps_match_original_collision() {
     let base = root().join("godot/base");
-    let Ok(dir) = std::fs::read_dir(&base) else { return };
+    let dir = std::fs::read_dir(&base).unwrap_or_else(|e| panic!("{}: {e} (tracked in git, restore it)", base.display()));
     let mut checked = 0;
     let mut pk3s: Vec<_> = dir.flatten().map(|e| e.path()).filter(|p| p.file_name().unwrap().to_string_lossy().starts_with("map-")).collect();
     pk3s.sort();
     for pk3 in pk3s {
         let Some((name, bytes)) = bsp_from_pk3(&pk3) else { continue };
         let golden = root().join(format!("re/traces/cm/{name}.sha256"));
-        let Ok(want) = std::fs::read_to_string(&golden) else { continue };
+        let want = std::fs::read_to_string(&golden).unwrap_or_else(|e| panic!("{}: {e} (tracked in git, restore it)", golden.display()));
         let cm = bsp::parse(&bytes).unwrap().clip_map();
         let q = cmq::queries(&cm, 30000, 7);
         let mut out = cmq::patch_lines(&cm);
@@ -53,6 +53,7 @@ fn real_maps_match_original_collision() {
         assert_eq!(got, want.trim(), "{name}: collision differs from the original (see the header of this test to diff)");
         checked += 1;
     }
+    assert!(checked > 0, "no map-*.pk3 with a .bsp found in {} (tracked in git, restore them)", base.display());
     eprintln!("checked {checked} maps");
 }
 

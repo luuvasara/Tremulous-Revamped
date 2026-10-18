@@ -2203,17 +2203,9 @@ mod tests {
     use super::*;
 
     pub(crate) fn data_files() -> Vec<(String, String)> {
-        let dir = std::path::Path::new("/tmp/claude-0/data110/scripts");
-        let mut v = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                let name = p.file_name().unwrap().to_string_lossy().to_string();
-                if name.ends_with(".particle") || name.ends_with(".trail") {
-                    v.push((format!("scripts/{name}"), std::fs::read_to_string(&p).unwrap()));
-                }
-            }
-        }
+        let d = crate::testdata::d110();
+        let v: Vec<(String, String)> = d.list("scripts", &[".particle", ".trail"]).into_iter().map(|f| (f.clone(), d.must_text(&f))).collect();
+        assert!(!v.is_empty(), "no scripts/*.particle or *.trail in the test data (see testdata.rs)");
         v
     }
 
@@ -2251,10 +2243,6 @@ mod tests {
     #[test]
     fn particles_parse_all_data() {
         let files = data_files();
-        if files.is_empty() {
-            eprintln!("no data at /tmp/claude-0/data110; skipping");
-            return;
-        }
         let lib = ParticleLib::load(&files);
         assert!(lib.errors.is_empty(), "{:?}", lib.errors);
         assert_eq!(lib.systems.len(), 31);
@@ -2346,9 +2334,7 @@ mod tests {
     #[test]
     fn particles_impact_emits_and_expires() {
         let (lib, tlib) = lib_and_trails();
-        if lib.systems.is_empty() {
-            return;
-        }
+        assert!(!lib.systems.is_empty());
         let cm = ClipMap::default();
         let mut ps = Particles::new();
         let mut ts = Trails::new();
@@ -2379,9 +2365,7 @@ mod tests {
     #[test]
     fn particles_infinite_follow_entity_then_destroy() {
         let (lib, tlib) = lib_and_trails();
-        if lib.systems.is_empty() {
-            return;
-        }
+        assert!(!lib.systems.is_empty());
         let cm = ClipMap::default();
         let mut ps = Particles::new();
         let mut ts = Trails::new();
@@ -2422,9 +2406,7 @@ mod tests {
     #[test]
     fn particles_lazy_remove_when_entity_gone() {
         let (lib, tlib) = lib_and_trails();
-        if lib.systems.is_empty() {
-            return;
-        }
+        assert!(!lib.systems.is_empty());
         let cm = ClipMap::default();
         let mut ps = Particles::new();
         let mut ts = Trails::new();
@@ -2450,9 +2432,7 @@ mod tests {
     #[test]
     fn particles_children_and_models() {
         let (lib, tlib) = lib_and_trails();
-        if lib.systems.is_empty() {
-            return;
-        }
+        assert!(!lib.systems.is_empty());
         let cm = ClipMap::default();
         let mut ps = Particles::new();
         let mut ts = Trails::new();

@@ -550,6 +550,7 @@ dependencies = [
  "godot",
  "trem_hdpack",
  "trem_sim",
+ "zip",
 ]
 
 [[package]]

@@ -7,8 +7,8 @@
 //!   of re/harness/msg69_ref.c (re/source11's msg.c, huffman.c, net_chan.c
 //!   and cl_net_chan.c's coders compiled natively).
 //! * round trips of the 1.1 deltas.
-//! * end to end against a real 1.1.0 tremded (skipped with a message when
-//!   the binary is missing): handshake, gamestate, Active, snapshots with
+//! * end to end against a real 1.1.0 tremded (#[ignore]d: needs
+//!   TREM11_DED / TREM11_BASE, and fails without them): handshake, gamestate, Active, snapshots with
 //!   entities, a playerState that moves after `team humans` / `class
 //!   rifle`, a clean disconnect in the server's log; Auto picks 69 for it.
 //! * Auto picks 71 for the port's own server.
@@ -312,17 +312,16 @@ fn hash_keys_differ_from_legacy_on_high_chars() {
 
 // ===================================================================== end to end
 
-/// The real 1.1.0 dedicated server: TREM11_DED (default the build of
-/// /tmp/claude-0/t11), its fs_basepath TREM11_BASE (default
-/// /tmp/claude-0/srv-n, base/ holding data-1.1.0.pk3, the maps and the 1.1
-/// game).
+/// The real 1.1.0 dedicated server: TREM11_DED (the tremded binary of a 1.1.0
+/// build), its fs_basepath TREM11_BASE (base/ holding data-1.1.0.pk3, the maps
+/// and the 1.1 game). The four tests that need it are #[ignore]d; run them with
+/// --ignored. With the variables unset or wrong they FAIL and say so: they are
+/// never skipped quietly.
 fn ded_paths() -> Option<(PathBuf, PathBuf)> {
-    let bin = PathBuf::from(std::env::var("TREM11_DED").unwrap_or_else(|_| "/tmp/claude-0/t11/build/release-linux-x86_64/tremded.x86_64".into()));
-    let base = PathBuf::from(std::env::var("TREM11_BASE").unwrap_or_else(|_| "/tmp/claude-0/srv-n".into()));
-    if !bin.exists() || !base.join("base").exists() {
-        eprintln!("SKIPPED: no Tremulous 1.1.0 tremded at {} (set TREM11_DED / TREM11_BASE)", bin.display());
-        return None;
-    }
+    let var = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("set {k}: these tests need a real Tremulous 1.1.0 tremded (TREM11_DED=<tremded binary>, TREM11_BASE=<fs_basepath holding base/>)"));
+    let (bin, base) = (PathBuf::from(var("TREM11_DED")), PathBuf::from(var("TREM11_BASE")));
+    assert!(bin.exists(), "TREM11_DED={} does not exist", bin.display());
+    assert!(base.join("base").exists(), "TREM11_BASE={} has no base/ folder", base.display());
     Some((bin, base))
 }
 
@@ -473,8 +472,9 @@ impl Peer {
 }
 
 #[test]
+#[ignore = "needs a real 1.1.0 tremded: set TREM11_DED and TREM11_BASE; run with --ignored"]
 fn joins_a_vanilla_server_and_moves() {
-    let Some(ded) = Ded::start(30791, false) else { return };
+    let ded = Ded::start(30791, false).unwrap();
     let mut p = Peer::new();
     p.cl.connect_protocol(&mut p.net, &format!("127.0.0.1:{}", ded.port), NetAdrType::Unspec, v11::PROTOCOL_VANILLA).unwrap();
     assert!(p.cl.vanilla());
@@ -510,8 +510,9 @@ fn joins_a_vanilla_server_and_moves() {
 }
 
 #[test]
+#[ignore = "needs a real 1.1.0 tremded: set TREM11_DED and TREM11_BASE; run with --ignored"]
 fn auto_picks_vanilla_for_a_vanilla_server() {
-    let Some(ded) = Ded::start(30792, false) else { return };
+    let ded = Ded::start(30792, false).unwrap();
     let mut p = Peer::new();
     assert_eq!(p.cl.net_protocol, NET_PROTOCOL_AUTO);
     p.cl.connect(&mut p.net, &format!("127.0.0.1:{}", ded.port)).unwrap();
@@ -585,8 +586,9 @@ fn connect_flags() {
 }
 
 #[test]
+#[ignore = "needs a real 1.1.0 tremded: set TREM11_DED and TREM11_BASE; run with --ignored"]
 fn joins_a_pure_vanilla_server() {
-    let Some(ded) = Ded::start(30793, true) else { return };
+    let ded = Ded::start(30793, true).unwrap();
     let (_, base) = ded_paths().unwrap();
     let mut p = Peer::new();
     // the client's search path holds the 1.1 paks the server runs on
@@ -603,8 +605,9 @@ fn joins_a_pure_vanilla_server() {
 }
 
 #[test]
+#[ignore = "needs a real 1.1.0 tremded: set TREM11_DED and TREM11_BASE; run with --ignored"]
 fn downloads_a_pak_from_a_vanilla_server() {
-    let Some(ded) = Ded::start_with(30794, true, &["+set", "sv_allowDownload", "1"]) else { return };
+    let ded = Ded::start_with(30794, true, &["+set", "sv_allowDownload", "1"]).unwrap();
     let (_, base) = ded_paths().unwrap();
     let home = std::env::temp_dir().join("trem11-client-home-30794");
     let _ = std::fs::remove_dir_all(&home);

@@ -564,22 +564,21 @@ mod tests {
         }
     }
 
-    /// Runs against a real data pk3 when TREM_DATA points at an unpacked one.
+    /// Runs against the real data-1.1.0.pk3 (or TREM_TEST_DATA_110, see testdata.rs).
     #[test]
-    fn real_models_parse_when_available() {
-        let Ok(dir) = std::env::var("TREM_DATA") else { return };
-        let p = std::path::Path::new(&dir);
+    fn real_models_parse() {
+        let d = crate::testdata::d110();
         for m in ["models/players/human_base/lower.md3", "models/players/human_base/upper.md3", "models/players/level4/nonseg.md3", "models/buildables/mgturret/turret_base.md3", "models/weapons/rifle/rifle.md3"] {
-            let md = parse(&std::fs::read(p.join(m)).unwrap()).unwrap_or_else(|e| panic!("{m}: {e}"));
+            let md = parse(&d.must_read(m)).unwrap_or_else(|e| panic!("{m}: {e}"));
             assert!(md.num_frames >= 1 && !md.surfaces.is_empty(), "{m}");
         }
         for c in ["human_base", "human_bsuit", "level0", "level1", "level2", "level3", "level4", "builder"] {
-            let t = std::fs::read_to_string(p.join(format!("models/players/{c}/animation.cfg"))).unwrap();
+            let t = d.must_text(&format!("models/players/{c}/animation.cfg"));
             let s = parse_player_anims(&t).unwrap_or_else(|e| panic!("{c}: {e}"));
             assert_eq!(s.nonsegmented, !c.starts_with("human"), "{c}");
         }
         for b in ["eggpod", "overmind", "barricade", "acid_tube", "trapper", "booster", "hive", "telenode", "mgturret", "tesla", "arm", "dcc", "medistat", "reactor", "repeater"] {
-            let t = std::fs::read_to_string(p.join(format!("models/buildables/{b}/animation.cfg"))).unwrap();
+            let t = d.must_text(&format!("models/buildables/{b}/animation.cfg"));
             parse_buildable_anims(&t).unwrap_or_else(|e| panic!("{b}: {e}"));
         }
     }
