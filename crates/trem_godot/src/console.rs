@@ -642,7 +642,7 @@ impl Completer<'_> {
             }
             for (c, v) in cvars.iter().filter(|(c, _)| m.printed(c)) {
                 // Com_TruncateLongString (TRUNCATE_LENGTH 64)
-                let v = if v.len() > 63 { format!("{} ... {}", &v[..30], &v[v.len() - 30..]) } else { v.clone() };
+                let v = if v.chars().count() > 63 { format!("{} ... {}", v.chars().take(30).collect::<String>(), v.chars().skip(v.chars().count() - 30).collect::<String>()) } else { v.clone() };
                 self.out.push(format!("    {c} = \"{v}\"\n"));
             }
         }

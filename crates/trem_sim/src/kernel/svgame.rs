@@ -511,8 +511,9 @@ pub fn client_list_contains(s: &str, i: usize) -> bool {
     if s.len() != 16 || i >= MAX_CLIENTS {
         return false;
     }
-    let hi = u32::from_str_radix(&s[..8], 16).unwrap_or(0);
-    let lo = u32::from_str_radix(&s[8..], 16).unwrap_or(0);
+    let (Some(h), Some(l)) = (s.get(..8), s.get(8..)) else { return false };
+    let hi = u32::from_str_radix(h, 16).unwrap_or(0);
+    let lo = u32::from_str_radix(l, 16).unwrap_or(0);
     if i < 32 {
         lo & (1 << i) != 0
     } else {

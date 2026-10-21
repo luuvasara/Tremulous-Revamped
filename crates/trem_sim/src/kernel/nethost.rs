@@ -267,7 +267,7 @@ impl NetHost {
 
     /// The local player's client number in the view.
     pub fn client_num(&self) -> Option<usize> {
-        (self.cl.state >= ConnState::Primed && self.cl.client_num >= 0).then_some(self.cl.client_num as usize)
+        (self.cl.state >= ConnState::Primed && self.cl.client_num >= 0 && (self.cl.client_num as usize) < super::world::MAX_CLIENTS).then_some(self.cl.client_num as usize)
     }
 
     /// `SV_SendServerCommand`-free answer to an rcon line.

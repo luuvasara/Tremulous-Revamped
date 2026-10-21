@@ -861,7 +861,7 @@ impl Cgame {
     /// `CG_ServerCommand`.
     fn server_command(&mut self, cl: &NetClient, w: &mut World, argv: &[String]) {
         let a = |i: usize| argv.get(i).map(|s| s.as_str()).unwrap_or("");
-        let me = self.client_num.max(0) as usize;
+        let me = self.client_num.clamp(0, MAX_CLIENTS as i32 - 1) as usize;
         let t = self.time;
         match a(0) {
             "cp" => w.center_prints.push((t, None, Some(me), a(1).to_string())),
@@ -874,7 +874,7 @@ impl Cgame {
                 // CG_Chat_f -> CG_Say
                 let from = super::spawn::c_atoi(a(1));
                 let mode = svgame::say_mode_from_num(super::spawn::c_atoi(a(2)));
-                let from = if from < 0 { super::world::CONSOLE } else { from as usize };
+                let from = if from < 0 || from as usize >= MAX_CLIENTS { super::world::CONSOLE } else { from as usize };
                 w.chat.push((t, me, from, mode, a(3).to_string()));
                 let _ = SayMode::All;
             }
@@ -917,7 +917,7 @@ impl Cgame {
             c.enter_time = w.level.time - s.time * 60000;
             if !w.ents[s.client].inuse && s.client as i32 != self.client_num {
                 c.ps.weapon = s.weapon;
-                c.ps.stats[Stat::Items as usize] = if s.upgrade > 0 { 1 << s.upgrade } else { 0 };
+                c.ps.stats[Stat::Items as usize] = if (1..32).contains(&s.upgrade) { 1 << s.upgrade } else { 0 };
             }
             self.scores.push(s);
         }
@@ -1245,5 +1245,150 @@ pub fn class_bbox(vanilla: bool, class: i32) -> (Vec3, Vec3, Vec3, Vec3, Vec3) {
         super::bg11::class_bbox(super::v11::class_to_11(class))
     } else {
         bg::class_bbox(class)
+    }
+}
+
+#[cfg(test)]
+mod server_value_bounds_tests {
+    use super::*;
+    use crate::gen::maps::MapId;
+
+    fn argv(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// Every server command with numbers far outside what this version holds,
+    /// for a player number outside the range too: nothing panics.
+    #[test]
+    fn server_commands_with_out_of_range_numbers_do_not_panic() {
+        let cl = NetClient::new(1);
+        for me in [0, 63, 64, 127, 1023, -5, i32::MAX] {
+            let mut cg = Cgame::new(me);
+            let mut w = World::client_view(MapId::Arena);
+            for a in [
+                argv(&["servermenu", "x", "hello", "1"]),
+                argv(&["poisoncloud"]),
+                argv(&["chat", "127", "99", "hi"]),
+                argv(&["chat", "-3", "-9", "hi"]),
+                argv(&["chat", "2147483647", "2147483647", "hi"]),
+                argv(&["scores", "1", "2", "3", "127", "1", "1", "1", "1", "99", "9999", "5", "5", "5", "5", "5", "-1", "-1", "-1", "-1", "-1", "-1"]),
+                argv(&["scores", "1", "2", "3", "5", "1", "1", "1", "1", "2147483647"]),
+                argv(&["tinfo", "127", "1", "1", "1", "9999", "1", "1", "1", "1"]),
+                argv(&["tinfo", "-1", "1"]),
+            ] {
+                cg.server_command(&cl, &mut w, &a);
+            }
+        }
+    }
+
+    #[test]
+    fn a_score_row_for_a_number_beyond_the_table_is_ignored_or_clamped() {
+        let cl = NetClient::new(1);
+        let mut cg = Cgame::new(0);
+        let mut w = World::client_view(MapId::Arena);
+        cg.server_command(&cl, &mut w, &argv(&["scores", "1", "2", "3", "127", "10", "20", "30", "1", "40"]));
+        assert!(cg.scores.iter().all(|s| s.client < MAX_CLIENTS));
+    }
+
+    #[test]
+    fn client_lists_with_multibyte_text_are_not_sliced() {
+        // 16 bytes, but byte 8 is inside a character
+        let s = "aaaaaaa\u{e9}aaaaaaa";
+        assert_eq!(s.len(), 16);
+        for i in [0, 1, 40, 63, 64, 127, usize::MAX] {
+            assert!(!svgame::client_list_contains(s, i));
+        }
+        assert!(svgame::client_list_contains("0000000000000001", 0));
+    }
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u32 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (self.0 >> 33) as u32
+        }
+        /// small, bit-width-ish, or extreme
+        fn v(&mut self) -> i32 {
+            match self.next() % 5 {
+                0 => (self.next() % 8) as i32,
+                1 => (self.next() % 256) as i32,
+                2 => (self.next() % 1024) as i32,
+                3 => self.next() as i32,
+                _ => [i32::MIN, i32::MAX, -1, 0, 127, 128, 255, 1023][(self.next() % 8) as usize],
+            }
+        }
+    }
+
+    /// Entity states and player states with every number random, extreme ones
+    /// included, through the view World: nothing panics.
+    #[test]
+    fn random_server_entities_and_player_state_do_not_panic() {
+        let mut r = Lcg(0x5eed);
+        for round in 0..300 {
+            let mut cg = Cgame::new(if round % 3 == 0 { r.v() } else { (r.next() % 64) as i32 });
+            let mut w = World::client_view(MapId::Arena);
+            let mut snap = Snapshot::default();
+            snap.ps.client_num = r.v();
+            for s in snap.ps.stats.iter_mut() {
+                *s = r.v();
+            }
+            for p in snap.ps.persistant.iter_mut() {
+                *p = r.v();
+            }
+            snap.ps.weapon = r.v();
+            snap.ps.generic1 = r.v();
+            snap.ps.ground_entity_num = r.v();
+            snap.ps.pm_flags = r.v();
+            snap.ps.pm_type = r.v();
+            let mut used = std::collections::HashSet::new();
+            for _ in 0..40 {
+                let n = (r.next() % 1022) as i32;
+                if !used.insert(n) {
+                    continue;
+                }
+                let mut s = EntityState::default();
+                s.number = n;
+                s.e_type = (r.next() % 40) as i32;
+                if r.next() % 3 == 0 {
+                    s.e_type = svgame::ET_PLAYER;
+                }
+                s.e_flags = r.v();
+                s.pos.tr_type = (r.next() % 10) as i32;
+                s.apos.tr_type = (r.next() % 10) as i32;
+                s.time = r.v();
+                s.time2 = r.v();
+                s.other_entity_num = r.v();
+                s.other_entity_num2 = r.v();
+                s.ground_entity_num = r.v();
+                s.constant_light = r.v();
+                s.loop_sound = r.v();
+                s.modelindex = r.v();
+                s.modelindex2 = r.v();
+                s.client_num = r.v();
+                s.frame = r.v();
+                s.solid = r.v();
+                s.event = r.v();
+                s.event_parm = r.v();
+                s.misc = r.v();
+                s.weapon = r.v();
+                s.legs_anim = r.v();
+                s.torso_anim = r.v();
+                s.weapon_anim = r.v();
+                s.generic1 = r.v();
+                cg.entities[n as usize].current_state = s;
+                cg.entities[n as usize].next_state = s;
+                cg.entities[n as usize].interpolate = r.next() % 2 == 0;
+                snap.entities.push(s);
+            }
+            cg.vanilla = round % 4 == 0;
+            cg.time = 1000;
+            snap.server_time = 900;
+            cg.snap = Some(snap);
+            for n in 0..1023 {
+                cg.check_events(&mut w, n);
+            }
+            cg.add_packet_entities(&mut w);
+            cg.write_local_player(&mut w);
+        }
     }
 }

@@ -303,6 +303,72 @@ pub fn check_dir_traversal(checkdir: &str) -> bool {
     checkdir.contains("../") || checkdir.contains("..\\")
 }
 
+/// Longest downloaded pak name accepted ("<dir>/<name>.pk3" as the server
+/// names it, with the extension).
+pub const MAX_DOWNLOAD_NAME_LEN: usize = 128;
+
+/// Whether a downloaded pak's name is safe to turn into a path below the
+/// download directory: a relative "<dir>/<name>.pk3", only
+/// `[A-Za-z0-9_.+-]` and '/', no empty component, none starting (".", "..", hidden) or
+/// ending in '.', no Windows device name, and a lower-case ".pk3" ending.
+/// Everything else (absolute paths, drive letters, UNC, '\\', ':', '@',
+/// NUL and control characters) is refused. This is the check of the
+/// server-supplied name; `download_dest` is the one place that uses it.
+pub fn safe_download_name(local: &str) -> bool {
+    if local.len() > MAX_DOWNLOAD_NAME_LEN || !local.ends_with(".pk3") {
+        return false;
+    }
+    if !local
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'+' | b'/'))
+    {
+        return false;
+    }
+    let mut parts = local.split('/').peekable();
+    while let Some(c) = parts.next() {
+        if c.is_empty() || c.starts_with('.') || c.ends_with('.') {
+            return false;
+        }
+        // Windows opens CON, NUL, COM1 ... (with any extension) as devices
+        let stem = c.split('.').next().unwrap_or("").to_ascii_uppercase();
+        let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+            || ((stem.starts_with("COM") || stem.starts_with("LPT"))
+                && stem.len() == 4
+                && stem.as_bytes()[3].is_ascii_digit());
+        if device {
+            return false;
+        }
+        // the file name needs a stem before ".pk3"
+        if parts.peek().is_none() && c.len() <= 4 {
+            return false;
+        }
+    }
+    true
+}
+
+/// `safe_download_name` of "<name>.pk3", for a name as `sv_referencedPakNames`
+/// lists it (no extension).
+pub fn safe_pak_name(name: &str) -> bool {
+    safe_download_name(&format!("{name}.pk3"))
+}
+
+/// The path a download of `local` is written to: `local` below `home`, or
+/// None when the name is unsafe or any component of it is not a plain
+/// name (so the join cannot replace or leave `home`).
+pub fn download_dest(home: &Path, local: &str) -> Option<PathBuf> {
+    if !safe_download_name(local) {
+        return None;
+    }
+    let rel = Path::new(local);
+    if !rel
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    Some(home.join(rel))
+}
+
 /// `FS_IsExt` list of FS_FOpenFileRead: files that do not reference a pak.
 fn unreferencing_ext(name: &str) -> bool {
     let l = name.to_lowercase();
@@ -619,9 +685,14 @@ impl PakSet {
             return None; // Server didn't send any pack information along
         }
         let mut needed = String::new();
-        for (sum, name) in self.server_referenced_paks.iter().zip(self.server_referenced_pak_names.iter()) {
-            // Make sure the server cannot make us write to non-quake3 directories.
-            if check_dir_traversal(name) {
+        for (sum, name) in self
+            .server_referenced_paks
+            .iter()
+            .zip(self.server_referenced_pak_names.iter())
+        {
+            // Make sure the server cannot make us write to non-quake3 directories
+            // (the original's ".." test is a subset of this).
+            if check_dir_traversal(name) || !safe_pak_name(name) {
                 continue;
             }
             let havepak = self.paks.iter().any(|p| p.checksum == *sum);
@@ -742,5 +813,99 @@ mod tests {
         assert_eq!(s.paks[1].basename, "z");
         assert!(!s.allowed(&s.paks[2]));
         assert_eq!(s.effective_paths().len(), 2);
+    }
+
+    #[test]
+    fn download_names_whitelist() {
+        for ok in [
+            "slacker/vms-1.1.0-bunker_220207-144309.pk3",
+            "gpp/map-arachnid2-1.pk3",
+            "base/data-x.pk3",
+            "a.pk3",
+            "slacker/x.0badf00d.pk3",
+            "dir/sub/x+y.pk3",
+        ] {
+            assert!(safe_download_name(ok), "{ok}");
+        }
+        let long = format!("{}.pk3", "a".repeat(MAX_DOWNLOAD_NAME_LEN));
+        let bad = [
+            "/tmp/x.pk3",
+            "C:\\x.pk3",
+            "C:x.pk3",
+            "\\\\host\\share\\x.pk3",
+            "\\x.pk3",
+            "//host/share/x.pk3",
+            "a@b.txt@c.pk3",
+            "x.dll",
+            "x.PK3",
+            "x.pk3.exe",
+            "x",
+            ".pk3",
+            "a/.pk3",
+            "a\0b.pk3",
+            "a\x07b.pk3",
+            "../x.pk3",
+            "a/../x.pk3",
+            "./x.pk3",
+            "a//b.pk3",
+            "a/b/.pk3",
+            "a/.hidden.pk3",
+            "x:stream.pk3",
+            "con.pk3",
+            "a/NUL.pk3",
+            "com1.pk3",
+            "lpt9.x.pk3",
+            "a space.pk3",
+            "",
+            "dir/",
+        ];
+        for b in bad {
+            assert!(!safe_download_name(b), "{b:?}");
+        }
+        assert!(!safe_download_name(&long));
+        assert!(safe_pak_name("slacker/vms-1.1.0-bunker_220207-144309"));
+        assert!(!safe_pak_name("a@b.txt@c"));
+    }
+
+    #[test]
+    fn download_dest_stays_below_home() {
+        let home = Path::new("/srv/game");
+        assert_eq!(
+            download_dest(home, "slacker/x-1.pk3"),
+            Some(home.join("slacker").join("x-1.pk3"))
+        );
+        for bad in [
+            "/tmp/x.pk3",
+            "../x.pk3",
+            "a/../../x.pk3",
+            "C:\\x.pk3",
+            "a@b.pk3",
+            "x.dll",
+        ] {
+            assert_eq!(download_dest(home, bad), None, "{bad}");
+        }
+    }
+
+    /// With the real Windows path rules (run for the windows target): the
+    /// accepted names never turn into a rooted, prefixed or parent path, and
+    /// the refused ones are the Windows forms of "outside the directory".
+    #[cfg(windows)]
+    #[test]
+    fn download_dest_windows_semantics() {
+        let home = Path::new("C:\\Users\\u\\tremulous");
+        let d = download_dest(home, "slacker/x-1.pk3").unwrap();
+        assert!(d.starts_with(home));
+        for bad in [
+            "C:\\x.pk3",
+            "C:x.pk3",
+            "\\\\host\\share\\x.pk3",
+            "\\x.pk3",
+            "//host/share/x.pk3",
+            "/x.pk3",
+            "x:stream.pk3",
+            "con.pk3",
+        ] {
+            assert_eq!(download_dest(home, bad), None, "{bad}");
+        }
     }
 }
